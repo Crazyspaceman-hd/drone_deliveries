@@ -1,0 +1,44 @@
+# === Python-specific ignores ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints/
+
+# === Environment directories ===
+env/
+venv/
+.capstone/
+capstone/
+.venv/
+.env/
+
+# === OS junk ===
+.DS_Store
+Thumbs.db
+
+# === IDE / Editor settings ===
+.vscode/
+.idea/
+*.swp
+
+# === Very Large Files ===
+*.npy
+*.tif
+*.tiff
+
+# === Data artifacts ===
+scripts/data/processed/
+data/logs/
+scripts/data/raw/elevation.tif
+scripts/data/raw/*.tif
+scripts/data/processed/*.npy
+scripts/data/raw/USGS_*.tif
+
+# === Path visualization outputs ===
+*.gif
+*.mp4
+*.avi
+
+# === Jupyter / notebook outputs ===
+*.ipynb

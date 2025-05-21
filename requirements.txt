@@ -1,0 +1,10 @@
+numpy
+matplotlib
+rasterio
+scipy
+strm
+# geopandas         # For FAA zones, shapefiles, vector maps
+# shapely           # Geometry operations, if FAA zones are polygon-based
+# pyproj            # Coordinate reprojection if needed
+# requests          # If you use USGS M2M API later
+# tqdm              # For progress bars during processing

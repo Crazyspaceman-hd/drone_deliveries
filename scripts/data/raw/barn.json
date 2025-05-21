@@ -1,0 +1,11 @@
+{
+  "drones": [
+    {
+      "id": "drone_001",
+      "model": "SimDrone v1",
+      "speed_mps": 10,
+      "capacity_kg": 2.5,
+      "range_km": 30
+    }
+  ]
+}
