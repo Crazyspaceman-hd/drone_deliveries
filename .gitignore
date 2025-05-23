@@ -11,7 +11,7 @@ venv/
 .capstone/
 capstone/
 .venv/
-.env/
+.env
 
 # === OS junk ===
 .DS_Store

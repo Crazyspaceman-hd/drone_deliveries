@@ -1,12 +1,11 @@
-import json
-import time
+import json, math, os, heapq, sqlite3, time
 from datetime import datetime
 import numpy as np
 import rasterio
 from rasterio.transform import xy
-import heapq
-import math
-import os
+from order_manager import fetch_pending_orders
+from drone_deliveries.scripts.core.delivery_logger import insert_delivery_leg  # name your logger file whatever you like
+from drone_deliveries.scripts.config.trino_config import TRINO_CONFIG
 
 # Configs
 COST_GRID_PATH = "data/processed/cost_grid.npy"
