@@ -43,5 +43,5 @@ scripts/data/raw/USGS_*.tif
 *.ipynb
 
 # === Secrets ===
-scripts/config/trino_config.py
+trino_config.py
 .env
