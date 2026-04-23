@@ -1,0 +1,16 @@
+{
+  "deliveries": [
+    {
+      "pickup": {
+        "name": "Fred Meyer - SE Holgate",
+        "lat": 45.484370,
+        "lon": -122.575990
+      },
+      "dropoff": {
+        "name": "Customer - Woodstock",
+        "lat": 45.478149,
+        "lon": -122.616676
+      }
+    }
+  ]
+}

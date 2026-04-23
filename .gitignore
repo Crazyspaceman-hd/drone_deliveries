@@ -29,10 +29,12 @@ Thumbs.db
 # === Data artifacts ===
 scripts/data/processed/
 data/logs/
+data/processed/
 scripts/data/raw/elevation.tif
 scripts/data/raw/*.tif
 scripts/data/processed/*.npy
 scripts/data/raw/USGS_*.tif
+*.sqlite
 
 # === Path visualization outputs ===
 *.gif
