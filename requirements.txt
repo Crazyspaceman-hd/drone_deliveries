@@ -8,3 +8,6 @@ strm
 # pyproj            # Coordinate reprojection if needed
 # requests          # If you use USGS M2M API later
 # tqdm              # For progress bars during processing
+
+# Test runner (Phase 5)
+pytest
