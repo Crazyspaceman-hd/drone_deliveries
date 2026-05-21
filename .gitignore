@@ -41,6 +41,9 @@ data/*.jsonl
 # === Test / cache ===
 .pytest_cache/
 
+# === Generated reporting artifacts ===
+outputs/
+
 # === Path visualization outputs ===
 *.gif
 *.mp4

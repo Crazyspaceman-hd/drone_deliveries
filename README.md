@@ -62,6 +62,7 @@ not integrated into the current event flow.
 | `route_deviation` | Drone deviated from the expected route. |
 | `emergency_return` | Trip aborted; drone returned to depot. |
 | `maintenance_required` | Drone flagged for service between trips. |
+| `maintenance_completed` | Drone finished service and returned to the idle pool. |
 | `error` | Catch-all for software/operational failures. |
 
 ### Event schema (`delivery_events` table and JSONL columns)
@@ -139,19 +140,20 @@ python run_analytics.py
   drones:           3
   trips_requested:  10
   trips_completed:  9
-  events_written:   172
+  events_written:   176
   event_counts_by_type:
-    battery_warning             7
+    battery_warning             5
     delivery_completed          9
     drone_assigned             10
     drone_launched             10
     emergency_return            1
-    maintenance_required        3
+    maintenance_completed       3
+    maintenance_required        2
     order_created              10
     pickup_completed           10
-    route_deviation             9
-    telemetry_ping            103
-  jsonl_export:     data/events.jsonl (172 rows)
+    route_deviation             8
+    telemetry_ping            108
+  jsonl_export:     data/events.jsonl (176 rows)
 ```
 
 One trip was aborted via `emergency_return`; the related order ends up
@@ -177,6 +179,28 @@ Run them all at once with `python run_analytics.py`, or individually:
 ```bash
 sqlite3 data/delivery_system.sqlite < analytics/sql/drone_utilization.sql
 ```
+
+---
+
+## Charts
+
+Static PNG charts can be generated from the SQLite store with matplotlib.
+They land in `outputs/charts/` (gitignored) by default.
+
+```bash
+python run_simulation.py --reset --drones 3 --trips 10 --seed 42 --export-jsonl data/events.jsonl
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+```
+
+Charts produced:
+
+| File | Content |
+|---|---|
+| `event_counts.png` | Bar chart of `delivery_events` counts by `event_type`. |
+| `trip_outcomes.png` | Bar chart of trips by final status. |
+| `drone_utilization.png` | Bar chart of `trips_flown` per drone. |
+| `battery_warnings_by_drone.png` | Count of `battery_warning` events per drone. |
+| `battery_over_time.png` | Per-drone line plot of `battery_pct` vs `event_time`. |
 
 ---
 
@@ -210,9 +234,9 @@ sqlite3 data/delivery_system.sqlite < analytics/sql/drone_utilization.sql
 - **Synthetic data only.** No real drones, customers, or routing.
 - **Round-robin dispatch.** The simulator does not implement realistic
   fleet selection.
-- **No maintenance gate.** A drone flagged `maintenance` will still be
-  picked on the next round-robin tick; the event log records the flag
-  but dispatch does not honor it.
+- **Simplified dispatch.** A drone in maintenance is now skipped until a
+  `maintenance_completed` event lands, but the dispatcher itself is still
+  a round-robin over the idle pool — not a real optimizer.
 - **No cloud pipeline yet.** Phase 3 stops at portable JSONL on local
   disk.
 - **No return-to-depot leg event.** The simulator models trips as
@@ -226,10 +250,22 @@ sqlite3 data/delivery_system.sqlite < analytics/sql/drone_utilization.sql
 
 ---
 
+## Dispatch
+
+When the simulator picks a drone for a new trip it now considers only
+drones currently `idle`. Drones in `maintenance` are skipped until their
+`maintenance_completed` event fires. If no drone is idle, the simulator
+advances its clock to the earliest scheduled maintenance completion,
+emits that event, and tries again. Maintenance has a fixed 240-second
+cooldown and restores battery to 100%. This is intentionally a
+simplified dispatcher, not a real fleet optimizer.
+
+---
+
 ## Future work
 
-- Add maintenance-aware dispatch so drones flagged for service are not
-  reassigned until cleared.
+- Replace round-robin dispatch with something workload-aware
+  (e.g. nearest-idle, battery-weighted).
 - Add a `return_to_depot_completed` event so trip-leg-3 has its own
   milestone and `legs_completed` reaches 3.
 - Add chunked / streaming JSONL export for runs that don't fit in memory.
