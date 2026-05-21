@@ -1,145 +1,157 @@
 """
 core/setup_db.py
 
-Initializes the local SQLite database used as the operational data store for
-the drone delivery simulation.
+Creates the local SQLite database used by the simulator.
 
-Design principle: every meaningful thing that happens in the system is written
-to delivery_events as an immutable append-only record.  Derived state (order
-status, drone location, etc.) is computed from the event log rather than
-mutated in place.  This mirrors how real-world operational systems are built
-on top of event streams (Kafka, Iceberg, etc.) and makes the local SQLite
-layer a faithful stand-in during development.
+Two layers:
+
+  Append-only event log
+    delivery_events    — every event ever emitted
+
+  Mutable projections (current derived state, maintained by core.projections)
+    depots, drones, orders, trips, trip_legs
 """
 
-import sqlite3
 import os
+import sqlite3
 
 
-# ---------------------------------------------------------------------------
-# Default path — callers may override by passing db_path explicitly.
-# ---------------------------------------------------------------------------
 DEFAULT_DB_PATH = "data/delivery_system.sqlite"
 
 
 def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
-    """
-    Create all tables if they do not already exist.
-
-    Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS throughout
-    so re-running never destroys existing data.
-    """
-    # Ensure the parent directory exists before SQLite tries to open the file.
-    os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
+    """Initialise all tables and indexes.  Idempotent."""
+    parent = os.path.dirname(db_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    # ------------------------------------------------------------------
-    # depots — physical locations where drones are stored and recharged.
-    # ------------------------------------------------------------------
+    # ── depots ─────────────────────────────────────────────────────────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS depots (
             depot_id   TEXT PRIMARY KEY,
             name       TEXT NOT NULL,
             lat        REAL,
             lon        REAL,
-            is_active  BOOLEAN,
+            is_active  INTEGER DEFAULT 1,
             created_at TIMESTAMP
         )
     """)
 
-    # ------------------------------------------------------------------
-    # orders — one row per customer delivery request.
-    #
-    # status is intentionally kept here as a convenience column.
-    # The canonical truth about an order's lifecycle lives in delivery_events.
-    # ------------------------------------------------------------------
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            order_id    TEXT PRIMARY KEY,
-            customer_id TEXT,
-            store_name  TEXT,
-            pickup_lat  REAL,
-            pickup_lon  REAL,
-            dropoff_lat REAL,
-            dropoff_lon REAL,
-            depot_id    TEXT,
-            created_at  TIMESTAMP,
-            status      TEXT
-        )
-    """)
-
-    # ------------------------------------------------------------------
-    # drones — fleet registry.  last_heartbeat is updated by the simulator
-    # to show liveness; it is NOT the source of truth for position.
-    # ------------------------------------------------------------------
+    # ── drones ─────────────────────────────────────────────────────────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS drones (
-            drone_id        TEXT PRIMARY KEY,
-            depot_id        TEXT,
-            status          TEXT,
-            last_heartbeat  TIMESTAMP
+            drone_id          TEXT PRIMARY KEY,
+            depot_id          TEXT NOT NULL,
+            model             TEXT,
+            speed_mps         REAL,
+            range_km          REAL,
+
+            status            TEXT NOT NULL DEFAULT 'idle',
+            current_trip_id   TEXT,
+            current_leg_id    TEXT,
+            current_lat       REAL,
+            current_lon       REAL,
+            battery_pct       REAL,
+            trips_flown       INTEGER NOT NULL DEFAULT 0,
+            legs_flown        INTEGER NOT NULL DEFAULT 0,
+            last_event_at     TIMESTAMP,
+            last_event_id     TEXT
         )
     """)
 
-    # ------------------------------------------------------------------
-    # delivery_events — THE central append-only event log.
-    #
-    # Every state transition in the system (order created, drone assigned,
-    # leg started, leg completed, delivery confirmed, error encountered) is
-    # written here as a new row.  Rows are never updated or deleted.
-    #
-    # This is the v2 data spine.  Analytics, dashboards, and derived tables
-    # should query this table rather than reading mutable status columns.
-    #
-    # Column notes:
-    #   event_id    — UUID, globally unique identifier for this event.
-    #   event_type  — machine-readable verb:
-    #                   order_created | drone_assigned | leg_started |
-    #                   leg_completed | delivery_confirmed | error
-    #   order_id    — FK to orders; NULL for system-level events.
-    #   drone_id    — FK to drones; NULL when no drone is involved yet.
-    #   leg_number  — 1 (hub→pickup), 2 (pickup→dropoff), 3 (dropoff→hub).
-    #                 NULL for non-flight events.
-    #   payload_json — arbitrary JSON blob for event-specific details
-    #                  (coordinates, cost, duration, error message, etc.).
-    #                  Keeping extra data in JSON avoids ALTER TABLE churn
-    #                  as the schema evolves.
-    #   occurred_at — UTC timestamp when the event happened in the simulation.
-    #   recorded_at — UTC timestamp when this row was inserted; useful for
-    #                 detecting processing lag.
-    # ------------------------------------------------------------------
+    # ── orders ─────────────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            order_id          TEXT PRIMARY KEY,
+            customer_id       TEXT NOT NULL,
+            store_name        TEXT NOT NULL,
+            pickup_lat        REAL NOT NULL,
+            pickup_lon        REAL NOT NULL,
+            dropoff_lat       REAL NOT NULL,
+            dropoff_lon       REAL NOT NULL,
+            depot_id          TEXT NOT NULL,
+            created_at        TIMESTAMP NOT NULL,
+
+            status            TEXT NOT NULL DEFAULT 'pending',
+            assigned_drone_id TEXT,
+            trip_id           TEXT,
+            last_event_at     TIMESTAMP,
+            last_event_id     TEXT
+        )
+    """)
+
+    # ── trips ──────────────────────────────────────────────────────────────
+    # One trip per delivery attempt.  Trips own legs.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trips (
+            trip_id        TEXT PRIMARY KEY,
+            drone_id       TEXT NOT NULL,
+            order_id       TEXT NOT NULL,
+            depot_id       TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'planned',
+            launched_at    TIMESTAMP,
+            completed_at   TIMESTAMP,
+            legs_completed INTEGER NOT NULL DEFAULT 0,
+            last_event_at  TIMESTAMP,
+            last_event_id  TEXT
+        )
+    """)
+
+    # ── trip_legs ──────────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS trip_legs (
+            leg_id     TEXT PRIMARY KEY,
+            trip_id    TEXT NOT NULL,
+            leg_index  INTEGER NOT NULL,    -- 1=hub→pickup, 2=pickup→drop, 3=drop→hub
+            start_lat  REAL,
+            start_lon  REAL,
+            end_lat    REAL,
+            end_lon    REAL,
+            started_at TIMESTAMP,
+            ended_at   TIMESTAMP
+        )
+    """)
+
+    # ── delivery_events (append-only log) ──────────────────────────────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS delivery_events (
-            event_id      TEXT PRIMARY KEY,
-            event_type    TEXT NOT NULL,
-            order_id      TEXT,
-            drone_id      TEXT,
-            leg_number    INTEGER,
-            payload_json  TEXT,
-            occurred_at   TIMESTAMP NOT NULL,
-            recorded_at   TIMESTAMP DEFAULT (datetime('now'))
+            event_id     TEXT PRIMARY KEY,
+            event_time   TIMESTAMP NOT NULL,
+            ingested_at  TIMESTAMP NOT NULL,
+
+            drone_id     TEXT,
+            trip_id      TEXT,
+            leg_id       TEXT,
+
+            event_type   TEXT NOT NULL,
+
+            latitude     REAL,
+            longitude    REAL,
+            battery_pct  REAL,
+
+            payload_json TEXT
         )
     """)
 
-    # Index on event_type so analytics queries that filter by event kind
-    # (e.g. "all leg_completed events this hour") stay fast even as the
-    # table grows into the millions of rows.
-    cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_delivery_events_type
-            ON delivery_events (event_type)
-    """)
-
-    # Index on order_id for efficient per-order event history lookups.
-    cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_delivery_events_order
-            ON delivery_events (order_id)
-    """)
+    # Indexes the analytics queries lean on.
+    for stmt in [
+        "CREATE INDEX IF NOT EXISTS idx_de_type     ON delivery_events (event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_de_drone    ON delivery_events (drone_id)",
+        "CREATE INDEX IF NOT EXISTS idx_de_trip     ON delivery_events (trip_id)",
+        "CREATE INDEX IF NOT EXISTS idx_de_time     ON delivery_events (event_time)",
+        "CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status)",
+        "CREATE INDEX IF NOT EXISTS idx_drones_status ON drones (status)",
+        "CREATE INDEX IF NOT EXISTS idx_trips_status  ON trips  (status)",
+        "CREATE INDEX IF NOT EXISTS idx_legs_trip     ON trip_legs (trip_id)",
+    ]:
+        cur.execute(stmt)
 
     conn.commit()
     conn.close()
-    print(f"Database initialized at: {db_path}")
+    print(f"Database ready: {db_path}")
 
 
 if __name__ == "__main__":

@@ -1,185 +1,159 @@
 """
 core/events.py
 
-Event type constants and the event logging interface for v2.
+Event type vocabulary + the single entry point for recording events.
 
-Responsibilities of this module:
-  1. Define the canonical string constants for each event_type value so that
-     every part of the codebase uses exactly the same strings.
-  2. Provide a single write_event() function that persists a DeliveryEvent
-     to the delivery_events table.
+  emit(event, sink)       — primary write path.  Appends the event and
+                            updates any projection rows in one transaction.
+                            `sink` is either a db path (str) or a Sink object.
+  write_event(event, ...) — append-only; does NOT touch projections.  Use
+                            for migrations and replay scenarios.
+  fetch_events(...)       — read helper for tests and inspection scripts.
 
-What this module intentionally does NOT do:
-  - No simulation logic.
-  - No pathfinding or terrain calculations.
-  - No network calls (Trino, Snowflake, S3) — those belong in future
-    analytics/exporters/ modules once the local event log is stable.
-  - No background threads or queues.
-
-The goal right now is a minimal, testable interface.  Every future pipeline
-stage (simulator, dispatcher, batch exporter) will call write_event() to
-record what it does.  The event log is the integration point.
+Module dependency position:
+    models.py  ←  events.py  ←  projections.py
+                      ↑
+                order_manager.py / simulator.py
 """
 
-import json
 import sqlite3
-from typing import Optional
+from typing import Optional, Union
 
 from core.models import DeliveryEvent
+from core.projections import (
+    _apply_drone_projection,
+    _apply_order_projection,
+    _apply_trip_projection,
+    _insert_event_row,
+)
 
 
-# ---------------------------------------------------------------------------
-# Event type constants
+# ─────────────────────────────────────────────────────────────────────────────
+# Event type constants.
 #
-# Use these instead of raw strings throughout the codebase.
-# Adding a new event type means adding one constant here plus any handling
-# logic in the consumer — no schema migrations needed.
-# ---------------------------------------------------------------------------
+# Naming convention: past-tense verb describing something that already
+# happened ("launched", "completed"), not a command.
+# ─────────────────────────────────────────────────────────────────────────────
 
-EVT_ORDER_CREATED      = "order_created"
-# Fired when a new delivery request is written to the orders table.
+# Order lifecycle (kept from v1 for the order side of the world).
+EVT_ORDER_CREATED   = "order_created"
+EVT_DRONE_ASSIGNED  = "drone_assigned"
 
-EVT_DRONE_ASSIGNED     = "drone_assigned"
-# Fired when a specific drone is matched to a pending order.
+# Trip / flight events (the target vocabulary).
+EVT_DRONE_LAUNCHED      = "drone_launched"
+EVT_PICKUP_COMPLETED    = "pickup_completed"
+EVT_TELEMETRY_PING      = "telemetry_ping"
+EVT_DELIVERY_COMPLETED  = "delivery_completed"
+EVT_BATTERY_WARNING     = "battery_warning"
+EVT_ROUTE_DEVIATION     = "route_deviation"
+EVT_EMERGENCY_RETURN    = "emergency_return"
+EVT_MAINTENANCE_REQUIRED = "maintenance_required"
 
-EVT_LEG_STARTED        = "leg_started"
-# Fired at the start of each flight leg (before pathfinding runs).
+# Catch-all error event.
+EVT_ERROR = "error"
 
-EVT_LEG_COMPLETED      = "leg_completed"
-# Fired when a flight leg finishes; payload includes cost and duration.
 
-EVT_DELIVERY_CONFIRMED = "delivery_confirmed"
-# Fired after all three legs complete successfully for an order.
-
-EVT_ERROR              = "error"
-# Fired when any step fails; payload.message contains the reason.
-
-# Ordered list useful for documentation and validation.
-ALL_EVENT_TYPES = [
+ALL_EVENT_TYPES: list[str] = [
     EVT_ORDER_CREATED,
     EVT_DRONE_ASSIGNED,
-    EVT_LEG_STARTED,
-    EVT_LEG_COMPLETED,
-    EVT_DELIVERY_CONFIRMED,
+    EVT_DRONE_LAUNCHED,
+    EVT_PICKUP_COMPLETED,
+    EVT_TELEMETRY_PING,
+    EVT_DELIVERY_COMPLETED,
+    EVT_BATTERY_WARNING,
+    EVT_ROUTE_DEVIATION,
+    EVT_EMERGENCY_RETURN,
+    EVT_MAINTENANCE_REQUIRED,
     EVT_ERROR,
 ]
 
 
-# ---------------------------------------------------------------------------
-# Event persistence
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# Primary write path
+# ─────────────────────────────────────────────────────────────────────────────
 
-def write_event(event: DeliveryEvent, db_path: str) -> None:
-    """
-    Append a single DeliveryEvent to the delivery_events table.
-
-    This is the only function in the codebase that writes to delivery_events.
-    Centralizing writes here means:
-      - Adding audit logging, metrics, or async forwarding later requires
-        changing one place, not every caller.
-      - Tests can mock or redirect writes by patching this function.
-
-    Args:
-        event:   The DeliveryEvent to persist.
-        db_path: Path to the SQLite database file.  Callers should pass
-                 the same path they used when calling setup_db.create_db().
-
-    Raises:
-        sqlite3.Error: propagated from sqlite3 if the INSERT fails
-                       (e.g. schema mismatch, disk full).
-    """
+def emit(event: DeliveryEvent, db_path: str) -> None:
+    """Append the event and update projection rows in one SQLite transaction."""
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO delivery_events (
-                event_id, event_type, order_id, drone_id,
-                leg_number, payload_json, occurred_at, recorded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.event_id,
-                event.event_type,
-                event.order_id,
-                event.drone_id,
-                event.leg_number,
-                event.payload_json,
-                event.occurred_at,
-                event.recorded_at,
-            ),
-        )
+        _insert_event_row(cur, event)
+        _apply_order_projection(cur, event)
+        _apply_drone_projection(cur, event)
+        _apply_trip_projection(cur, event)
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        # Always close the connection even if the INSERT raises.
         conn.close()
 
+
+def write_event(event: DeliveryEvent, db_path: str) -> None:
+    """Append-only write to delivery_events.  Skips projection updates."""
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        _insert_event_row(cur, event)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Read helper
+# ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_events(
     db_path: str,
     event_type: Optional[str] = None,
-    order_id: Optional[str] = None,
+    drone_id:   Optional[str] = None,
+    trip_id:    Optional[str] = None,
     limit: int = 100,
 ) -> list[DeliveryEvent]:
-    """
-    Read events back from the log with optional filters.
-
-    This is a convenience function for debugging and testing.  Production
-    analytics should query delivery_events directly via SQL (see analytics/sql/).
-
-    Args:
-        db_path:    Path to the SQLite database.
-        event_type: If provided, only return events of this type.
-        order_id:   If provided, only return events for this order.
-        limit:      Maximum number of rows to return (most recent first).
-
-    Returns:
-        List of DeliveryEvent objects ordered by occurred_at descending.
-    """
+    """Read events from the log with optional filters (debug / test use only)."""
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
 
-        # Build WHERE clause dynamically based on which filters are provided.
-        conditions = []
+        conditions: list[str] = []
         params: list = []
-
         if event_type is not None:
             conditions.append("event_type = ?")
             params.append(event_type)
-
-        if order_id is not None:
-            conditions.append("order_id = ?")
-            params.append(order_id)
+        if drone_id is not None:
+            conditions.append("drone_id = ?")
+            params.append(drone_id)
+        if trip_id is not None:
+            conditions.append("trip_id = ?")
+            params.append(trip_id)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
         cur.execute(
             f"""
-            SELECT event_id, event_type, order_id, drone_id,
-                   leg_number, payload_json, occurred_at, recorded_at
-            FROM   delivery_events
+            SELECT event_id, event_time, ingested_at,
+                   drone_id, trip_id, leg_id, event_type,
+                   latitude, longitude, battery_pct, payload_json
+              FROM delivery_events
             {where}
-            ORDER BY occurred_at DESC
-            LIMIT ?
+             ORDER BY event_time DESC
+             LIMIT ?
             """,
             params + [limit],
         )
-
         rows = cur.fetchall()
     finally:
         conn.close()
 
     return [
         DeliveryEvent(
-            event_id=row[0],
-            event_type=row[1],
-            order_id=row[2],
-            drone_id=row[3],
-            leg_number=row[4],
-            payload_json=row[5],
-            occurred_at=row[6],
-            recorded_at=row[7],
+            event_id=r[0], event_time=r[1], ingested_at=r[2],
+            drone_id=r[3], trip_id=r[4], leg_id=r[5], event_type=r[6],
+            latitude=r[7], longitude=r[8], battery_pct=r[9],
+            payload_json=r[10],
         )
-        for row in rows
+        for r in rows
     ]

@@ -1,21 +1,27 @@
 """
 core/order_manager.py
 
-CRUD operations for the orders table.
+Create and query delivery orders.
 
-All functions accept an explicit db_path argument so they work regardless of
-the caller's working directory.  The module-level DEFAULT_DB_PATH is used when
-no path is passed — callers should override it for tests.
+create_order() emits an `order_created` event in the same transaction as the
+orders-row INSERT.  Because order_created carries no trip context, the order
+projection's INSERT defaults serve as the initial state and the event row is
+the audit trail.
 """
 
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
+
+from core.events import EVT_ORDER_CREATED
+from core.models import DeliveryEvent, OrderStatus
+from core.projections import _insert_event_row
 
 DEFAULT_DB_PATH = "data/delivery_system.sqlite"
 
 
-def insert_order(
+def create_order(
     customer_id: str,
     store_name: str,
     pickup_lat: float,
@@ -25,15 +31,19 @@ def insert_order(
     depot_id: str = "depot-001",
     db_path: str = DEFAULT_DB_PATH,
 ) -> str:
-    """
-    Insert a new order row and return its generated order_id.
-
-    Status is always 'pending' on creation.  The order lifecycle
-    (pending → delivered / error) is tracked in delivery_events;
-    the status column here is a convenience denormalization.
-    """
+    """Insert one order row and append an order_created event atomically."""
     order_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
+
+    payload = DeliveryEvent.encode_payload({
+        "order_id":   order_id,
+        "customer_id": customer_id,
+        "store_name":  store_name,
+    })
+    event = DeliveryEvent(
+        event_type=EVT_ORDER_CREATED,
+        payload_json=payload,
+    )
 
     conn = sqlite3.connect(db_path)
     try:
@@ -42,76 +52,55 @@ def insert_order(
             """
             INSERT INTO orders (
                 order_id, customer_id, store_name,
-                pickup_lat, pickup_lon,
-                dropoff_lat, dropoff_lon,
-                depot_id, created_at, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
+                depot_id, created_at, status,
+                last_event_at, last_event_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order_id, customer_id, store_name,
-                pickup_lat, pickup_lon,
-                dropoff_lat, dropoff_lon,
-                depot_id, created_at, "pending",
+                pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
+                depot_id, created_at, OrderStatus.PENDING,
+                event.event_time, event.event_id,
             ),
         )
+        _insert_event_row(cur, event)
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
-    print(f"Order {order_id} created for {customer_id}")
     return order_id
 
 
-def fetch_pending_orders(db_path: str = DEFAULT_DB_PATH) -> list:
-    """Return all orders where status = 'pending'."""
+def fetch_order(order_id: str, db_path: str = DEFAULT_DB_PATH) -> Optional[dict]:
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def fetch_orders_by_status(status: str, db_path: str = DEFAULT_DB_PATH) -> list[dict]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     try:
         cur = conn.cursor()
         cur.execute(
-            """
-            SELECT order_id, customer_id, store_name,
-                   pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
-                   depot_id, created_at, status
-            FROM   orders
-            WHERE  status = 'pending'
-            """
+            "SELECT * FROM orders WHERE status = ? ORDER BY created_at ASC",
+            (status,),
         )
         rows = cur.fetchall()
     finally:
         conn.close()
-    return rows
+    return [dict(r) for r in rows]
 
 
-def mark_order_delivered(order_id: str, db_path: str = DEFAULT_DB_PATH) -> None:
-    """
-    Update the convenience status column to 'delivered'.
-
-    The canonical delivery record is the delivery_confirmed event in
-    delivery_events; this update keeps the orders table queryable by status
-    without joining the event log every time.
-    """
-    conn = sqlite3.connect(db_path)
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE orders SET status = 'delivered' WHERE order_id = ?",
-            (order_id,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    print(f"Order {order_id} marked as delivered.")
-
-
-if __name__ == "__main__":
-    insert_order(
-        customer_id="C001",
-        store_name="Powell's City of Books",
-        pickup_lat=45.5231,
-        pickup_lon=-122.6819,
-        dropoff_lat=45.5351,
-        dropoff_lon=-122.6210,
-    )
-    print("=== Pending Orders ===")
-    for row in fetch_pending_orders():
-        print(row)
+def fetch_pending_orders(db_path: str = DEFAULT_DB_PATH) -> list[dict]:
+    return fetch_orders_by_status(OrderStatus.PENDING, db_path)

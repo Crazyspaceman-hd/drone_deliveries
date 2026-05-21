@@ -35,6 +35,11 @@ scripts/data/raw/*.tif
 scripts/data/processed/*.npy
 scripts/data/raw/USGS_*.tif
 *.sqlite
+*.db
+data/*.jsonl
+
+# === Test / cache ===
+.pytest_cache/
 
 # === Path visualization outputs ===
 *.gif
