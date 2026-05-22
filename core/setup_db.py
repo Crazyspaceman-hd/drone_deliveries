@@ -96,7 +96,8 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
             completed_at   TIMESTAMP,
             legs_completed INTEGER NOT NULL DEFAULT 0,
             last_event_at  TIMESTAMP,
-            last_event_id  TEXT
+            last_event_id  TEXT,
+            scenario_name  TEXT       -- operational scenario this trip belongs to
         )
     """)
 
@@ -132,7 +133,9 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
             longitude    REAL,
             battery_pct  REAL,
 
-            payload_json TEXT
+            payload_json TEXT,
+
+            scenario_name TEXT       -- operational scenario this event belongs to
         )
     """)
 
@@ -146,6 +149,8 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
         "CREATE INDEX IF NOT EXISTS idx_drones_status ON drones (status)",
         "CREATE INDEX IF NOT EXISTS idx_trips_status  ON trips  (status)",
         "CREATE INDEX IF NOT EXISTS idx_legs_trip     ON trip_legs (trip_id)",
+        "CREATE INDEX IF NOT EXISTS idx_de_scenario   ON delivery_events (scenario_name)",
+        "CREATE INDEX IF NOT EXISTS idx_trips_scenario ON trips (scenario_name)",
     ]:
         cur.execute(stmt)
 

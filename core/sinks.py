@@ -82,6 +82,7 @@ _EVENT_COLUMNS = (
     "event_id", "event_time", "ingested_at",
     "drone_id", "trip_id", "leg_id", "event_type",
     "latitude", "longitude", "battery_pct", "payload_json",
+    "scenario_name",
 )
 
 

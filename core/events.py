@@ -44,10 +44,12 @@ EVT_DRONE_LAUNCHED      = "drone_launched"
 EVT_PICKUP_COMPLETED    = "pickup_completed"
 EVT_TELEMETRY_PING      = "telemetry_ping"
 EVT_DELIVERY_COMPLETED  = "delivery_completed"
+EVT_RETURNED_TO_DEPOT   = "returned_to_depot"
 EVT_BATTERY_WARNING     = "battery_warning"
 EVT_ROUTE_DEVIATION     = "route_deviation"
 EVT_EMERGENCY_RETURN    = "emergency_return"
-EVT_MAINTENANCE_REQUIRED = "maintenance_required"
+EVT_MAINTENANCE_REQUIRED  = "maintenance_required"
+EVT_MAINTENANCE_COMPLETED = "maintenance_completed"
 
 # Catch-all error event.
 EVT_ERROR = "error"
@@ -60,10 +62,12 @@ ALL_EVENT_TYPES: list[str] = [
     EVT_PICKUP_COMPLETED,
     EVT_TELEMETRY_PING,
     EVT_DELIVERY_COMPLETED,
+    EVT_RETURNED_TO_DEPOT,
     EVT_BATTERY_WARNING,
     EVT_ROUTE_DEVIATION,
     EVT_EMERGENCY_RETURN,
     EVT_MAINTENANCE_REQUIRED,
+    EVT_MAINTENANCE_COMPLETED,
     EVT_ERROR,
 ]
 
@@ -136,7 +140,8 @@ def fetch_events(
             f"""
             SELECT event_id, event_time, ingested_at,
                    drone_id, trip_id, leg_id, event_type,
-                   latitude, longitude, battery_pct, payload_json
+                   latitude, longitude, battery_pct, payload_json,
+                   scenario_name
               FROM delivery_events
             {where}
              ORDER BY event_time DESC
@@ -153,7 +158,7 @@ def fetch_events(
             event_id=r[0], event_time=r[1], ingested_at=r[2],
             drone_id=r[3], trip_id=r[4], leg_id=r[5], event_type=r[6],
             latitude=r[7], longitude=r[8], battery_pct=r[9],
-            payload_json=r[10],
+            payload_json=r[10], scenario_name=r[11],
         )
         for r in rows
     ]

@@ -46,13 +46,16 @@ from core.events import (
     EVT_DRONE_LAUNCHED,
     EVT_EMERGENCY_RETURN,
     EVT_MAINTENANCE_REQUIRED,
+    EVT_MAINTENANCE_COMPLETED,
     EVT_ORDER_CREATED,
     EVT_PICKUP_COMPLETED,
+    EVT_RETURNED_TO_DEPOT,
     EVT_ROUTE_DEVIATION,
     EVT_TELEMETRY_PING,
     emit,
 )
 from core.models import DeliveryEvent, OrderStatus
+from core.scenarios import Scenario, get_scenario
 from core.setup_db import create_db
 
 
@@ -143,12 +146,13 @@ def _insert_order_row(
 
 
 def _insert_trip_row(
-    cur: sqlite3.Cursor, *, trip_id: str, drone_id: str, order_id: str, depot_id: str,
+    cur: sqlite3.Cursor, *, trip_id: str, drone_id: str, order_id: str,
+    depot_id: str, scenario_name: Optional[str] = None,
 ) -> None:
     cur.execute(
-        "INSERT INTO trips(trip_id, drone_id, order_id, depot_id, status) "
-        "VALUES (?, ?, ?, ?, 'planned')",
-        (trip_id, drone_id, order_id, depot_id),
+        "INSERT INTO trips(trip_id, drone_id, order_id, depot_id, status, scenario_name) "
+        "VALUES (?, ?, ?, ?, 'planned', ?)",
+        (trip_id, drone_id, order_id, depot_id, scenario_name),
     )
 
 
@@ -190,7 +194,15 @@ def run_simulation(
     n_drones: int = 3,
     n_trips: int = 10,
     seed: int = 42,
+    scenario: "str | Scenario | None" = None,
 ) -> dict:
+    """Run a deterministic synthetic event simulation.
+
+    ``scenario`` may be a registered name (see core.scenarios.list_scenarios),
+    a Scenario instance, or None (defaults to ``suburban_standard``, which
+    reproduces the pre-Phase-9 hard-coded behaviour for back-compat).
+    """
+    sc = get_scenario(scenario)
     rng = random.Random(seed)
     create_db(db_path)
 
@@ -213,8 +225,12 @@ def run_simulation(
         battery: Optional[float] = None,
         payload: Optional[dict] = None,
         dt_seconds: float = 1.0,
+        at_time: Optional[str] = None,
     ) -> None:
-        ts = tick(dt_seconds)
+        if at_time is not None:
+            ts = at_time            # explicit timestamp (e.g. maintenance completion)
+        else:
+            ts = tick(dt_seconds)
         ev = DeliveryEvent(
             event_type=event_type,
             drone_id=drone_id, trip_id=trip_id, leg_id=leg_id,
@@ -222,6 +238,7 @@ def run_simulation(
             payload_json=DeliveryEvent.encode_payload(payload),
             event_time=ts,
             ingested_at=ts,
+            scenario_name=sc.name,
         )
         emit(ev, db_path)
         counts[event_type] = counts.get(event_type, 0) + 1
@@ -236,9 +253,68 @@ def run_simulation(
     # projection on every telemetry_ping.
     drone_battery: dict[str, float] = {d: 100.0 for d in drone_ids}
 
+    # Dispatch state.
+    #   drone_status     — per-drone view ("idle" / "flying" / "maintenance")
+    #   pending_completions — drone_id -> sim time at which maintenance ends
+    # Cooldown is a fixed 240 s so this change adds no new RNG draws and the
+    # rest of the simulator's seeded behavior stays comparable.
+    drone_status: dict[str, str] = {d: "idle" for d in drone_ids}
+    pending_completions: dict[str, datetime] = {}
+    MAINTENANCE_COOLDOWN_S = sc.maintenance_duration_seconds
+    RESTORED_BATTERY_PCT   = 100.0
+
+    def schedule_maintenance(did: str, reason: str) -> None:
+        """Mark a drone in maintenance and schedule its completion event."""
+        drone_status[did] = "maintenance"
+        pending_completions[did] = sim_clock + timedelta(seconds=MAINTENANCE_COOLDOWN_S)
+        pending_completions[did + "__reason"] = reason  # carried via parallel dict
+
+    def _pop_due_completions() -> None:
+        """Fire any maintenance_completed events whose scheduled time has passed."""
+        due = [d for d, t in pending_completions.items()
+               if not d.endswith("__reason") and t <= sim_clock]
+        for did in due:
+            scheduled_at = pending_completions.pop(did)
+            reason = pending_completions.pop(did + "__reason", "scheduled_inspection")
+            _emit(
+                EVT_MAINTENANCE_COMPLETED, drone_id=did,
+                lat=DEPOT_LAT, lon=DEPOT_LON,
+                battery=RESTORED_BATTERY_PCT,
+                payload={
+                    "reason": reason,
+                    "maintenance_duration_seconds": MAINTENANCE_COOLDOWN_S,
+                    "restored_battery_pct": RESTORED_BATTERY_PCT,
+                },
+                at_time=scheduled_at.isoformat(),
+            )
+            drone_status[did]  = "idle"
+            drone_battery[did] = RESTORED_BATTERY_PCT
+
+    def pick_drone(trip_idx: int) -> str:
+        """Pick an idle drone; advance clock and emit completions as needed."""
+        nonlocal sim_clock
+        for _attempt in range(len(drone_ids) + 1):
+            _pop_due_completions()
+            # Round-robin starting offset = trip_idx for deterministic rotation.
+            start = trip_idx % len(drone_ids)
+            for offset in range(len(drone_ids)):
+                d = drone_ids[(start + offset) % len(drone_ids)]
+                if drone_status[d] == "idle":
+                    return d
+            # Nothing idle — advance to earliest scheduled completion.
+            ready = {k: v for k, v in pending_completions.items()
+                     if not k.endswith("__reason")}
+            if not ready:
+                raise RuntimeError(
+                    "no idle drones and no maintenance completions pending"
+                )
+            sim_clock = max(sim_clock, min(ready.values()))
+        raise RuntimeError("dispatch loop did not converge")
+
     for trip_idx in range(n_trips):
-        # ── pick a drone (round-robin), generate order coordinates ──────────
-        drone_id = drone_ids[trip_idx % len(drone_ids)]
+        # ── pick a drone (maintenance-aware), generate order coordinates ────
+        drone_id = pick_drone(trip_idx)
+        drone_status[drone_id] = "flying"
         order_id = str(uuid.uuid4())
         trip_id  = str(uuid.uuid4())
 
@@ -262,7 +338,8 @@ def run_simulation(
                 created_at=sim_clock.isoformat(),
             )
             _insert_trip_row(cur, trip_id=trip_id, drone_id=drone_id,
-                             order_id=order_id, depot_id=depot_id)
+                             order_id=order_id, depot_id=depot_id,
+                             scenario_name=sc.name)
             leg1_id, leg2_id, leg3_id = (str(uuid.uuid4()) for _ in range(3))
             _insert_leg_row(cur, leg_id=leg1_id, trip_id=trip_id, leg_index=1,
                             start_lat=depot_pt[0], start_lon=depot_pt[1],
@@ -299,15 +376,15 @@ def run_simulation(
             dt_seconds=5,
         )
 
-        ping_steps = rng.randint(3, 6)
+        ping_steps = rng.randint(3, 6) + sc.telemetry_bonus_per_leg
         for lat, lon in _interpolate(depot_pt, pickup, ping_steps):
-            battery = max(0.0, battery - rng.uniform(1.5, 3.0))
+            battery = max(0.0, battery - rng.uniform(1.5, 3.0) * sc.battery_drain_multiplier)
             _emit(
                 EVT_TELEMETRY_PING, drone_id=drone_id, trip_id=trip_id, leg_id=leg1_id,
                 lat=lat, lon=lon, battery=battery,
                 dt_seconds=rng.randint(20, 45),
             )
-            _maybe_inject_warnings(_emit, rng, drone_id, trip_id, leg1_id, lat, lon, battery)
+            _maybe_inject_warnings(_emit, rng, sc, drone_id, trip_id, leg1_id, lat, lon, battery)
 
         _emit(
             EVT_PICKUP_COMPLETED, drone_id=drone_id, trip_id=trip_id, leg_id=leg1_id,
@@ -318,19 +395,19 @@ def run_simulation(
 
         # ── leg 2: pickup → dropoff, with telemetry ─────────────────────────
         # Small chance of emergency return on leg 2.
-        emergency = rng.random() < 0.05
-        ping_steps = rng.randint(4, 8)
+        emergency = rng.random() < sc.emergency_return_chance
+        ping_steps = rng.randint(4, 8) + sc.telemetry_bonus_per_leg
         end_point = depot_pt if emergency else dropoff
         leg2_target = leg2_id if not emergency else leg2_id  # leg_id stays leg2
 
         for lat, lon in _interpolate(pickup, end_point, ping_steps):
-            battery = max(0.0, battery - rng.uniform(2.0, 4.0))
+            battery = max(0.0, battery - rng.uniform(2.0, 4.0) * sc.battery_drain_multiplier)
             _emit(
                 EVT_TELEMETRY_PING, drone_id=drone_id, trip_id=trip_id, leg_id=leg2_target,
                 lat=lat, lon=lon, battery=battery,
                 dt_seconds=rng.randint(20, 45),
             )
-            _maybe_inject_warnings(_emit, rng, drone_id, trip_id, leg2_target, lat, lon, battery)
+            _maybe_inject_warnings(_emit, rng, sc, drone_id, trip_id, leg2_target, lat, lon, battery)
 
         if emergency:
             _emit(
@@ -340,6 +417,10 @@ def run_simulation(
                 dt_seconds=5,
             )
             drone_battery[drone_id] = battery
+            # Emergency-return drones always go through maintenance before
+            # returning to service — matches the projection logic that already
+            # transitions the drone to MAINTENANCE on this event.
+            schedule_maintenance(drone_id, "post_emergency_return")
         else:
             _emit(
                 EVT_DELIVERY_COMPLETED, drone_id=drone_id, trip_id=trip_id, leg_id=leg2_id,
@@ -347,18 +428,42 @@ def run_simulation(
                 payload={"order_id": order_id, "store_name": store},
                 dt_seconds=10,
             )
+            # ── leg 3: dropoff → depot, with telemetry ──────────────────────
+            return_steps = rng.randint(3, 6) + sc.telemetry_bonus_per_leg
+            for lat, lon in _interpolate(dropoff, depot_pt, return_steps):
+                battery = max(0.0, battery - rng.uniform(1.5, 3.0) * sc.battery_drain_multiplier)
+                _emit(
+                    EVT_TELEMETRY_PING, drone_id=drone_id, trip_id=trip_id, leg_id=leg3_id,
+                    lat=lat, lon=lon, battery=battery,
+                    dt_seconds=rng.randint(20, 45),
+                )
+                _maybe_inject_warnings(_emit, rng, sc, drone_id, trip_id, leg3_id, lat, lon, battery)
+
+            _emit(
+                EVT_RETURNED_TO_DEPOT, drone_id=drone_id, trip_id=trip_id, leg_id=leg3_id,
+                lat=depot_pt[0], lon=depot_pt[1], battery=battery,
+                payload={"order_id": order_id},
+                dt_seconds=5,
+            )
             trips_completed += 1
             drone_battery[drone_id] = battery
+            drone_status[drone_id] = "idle"
 
         # ── between trips: maybe schedule maintenance ──────────────────────
-        if drone_battery[drone_id] < 25 or rng.random() < 0.08:
-            _emit(
-                EVT_MAINTENANCE_REQUIRED, drone_id=drone_id,
-                payload={"reason": "low_battery" if drone_battery[drone_id] < 25
-                                  else "scheduled_inspection"},
-                dt_seconds=30,
-            )
-            drone_battery[drone_id] = 100.0  # post-service swap
+        # Draw the RNG unconditionally so the seeded sequence stays stable.
+        maint_roll = rng.random()
+        if drone_battery[drone_id] < 25 or maint_roll < sc.maintenance_chance:
+            if drone_status[drone_id] == "idle":
+                reason = "low_battery" if drone_battery[drone_id] < 25 else "scheduled_inspection"
+                _emit(
+                    EVT_MAINTENANCE_REQUIRED, drone_id=drone_id,
+                    payload={"reason": reason},
+                    dt_seconds=30,
+                )
+                schedule_maintenance(drone_id, reason)
+            # If the drone is already in maintenance (e.g. after an emergency
+            # return), don't re-emit the request — the existing completion
+            # event already covers it.
 
     # Count what actually landed in the DB as a cross-check.
     conn = sqlite3.connect(db_path)
@@ -379,6 +484,7 @@ def run_simulation(
         "events_written":       events_written,
         "event_counts_by_type": event_counts_by_type,
         "db_path":              db_path,
+        "scenario":             sc.name,
     }
 
 
@@ -387,19 +493,24 @@ def run_simulation(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _maybe_inject_warnings(
-    emit_fn, rng: random.Random,
+    emit_fn, rng: random.Random, sc: Scenario,
     drone_id: str, trip_id: str, leg_id: str,
     lat: float, lon: float, battery: float,
 ) -> None:
-    """Occasionally emit battery_warning or route_deviation mid-flight."""
-    if battery < 30 and rng.random() < 0.4:
+    """Occasionally emit battery_warning or route_deviation mid-flight.
+
+    Thresholds and probabilities come from the active Scenario so different
+    operational environments produce visibly different operational noise.
+    """
+    if battery < sc.battery_warning_threshold and rng.random() < 0.4:
         emit_fn(
             EVT_BATTERY_WARNING, drone_id=drone_id, trip_id=trip_id, leg_id=leg_id,
             lat=lat, lon=lon, battery=battery,
-            payload={"threshold": 30.0, "warning_reason": "below_threshold"},
+            payload={"threshold": sc.battery_warning_threshold,
+                     "warning_reason": "below_threshold"},
             dt_seconds=1,
         )
-    if rng.random() < 0.05:
+    if rng.random() < sc.route_deviation_chance:
         emit_fn(
             EVT_ROUTE_DEVIATION, drone_id=drone_id, trip_id=trip_id, leg_id=leg_id,
             lat=lat, lon=lon, battery=battery,

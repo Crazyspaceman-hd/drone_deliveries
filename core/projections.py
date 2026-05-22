@@ -27,14 +27,16 @@ def _insert_event_row(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
         INSERT INTO delivery_events (
             event_id, event_time, ingested_at,
             drone_id, trip_id, leg_id, event_type,
-            latitude, longitude, battery_pct, payload_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, battery_pct, payload_json,
+            scenario_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.event_id, event.event_time, event.ingested_at,
             event.drone_id, event.trip_id, event.leg_id, event.event_type,
             event.latitude, event.longitude, event.battery_pct,
             event.payload_json,
+            event.scenario_name,
         ),
     )
 
@@ -143,10 +145,12 @@ def _apply_drone_projection(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
         EVT_DRONE_ASSIGNED,
         EVT_DRONE_LAUNCHED,
         EVT_DELIVERY_COMPLETED,
+        EVT_RETURNED_TO_DEPOT,
         EVT_EMERGENCY_RETURN,
         EVT_TELEMETRY_PING,
         EVT_PICKUP_COMPLETED,
         EVT_MAINTENANCE_REQUIRED,
+        EVT_MAINTENANCE_COMPLETED,
         EVT_ERROR,
     )
 
@@ -212,6 +216,24 @@ def _apply_drone_projection(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
              event.event_time, event.event_id, event.drone_id),
         )
     elif t == EVT_DELIVERY_COMPLETED:
+        # Package was delivered to the customer, but the operational trip is
+        # not finished — the drone still has to fly back to the depot.  Keep
+        # the drone airborne (status unchanged) and just record the new
+        # position / battery sample.
+        cur.execute(
+            f"""
+            UPDATE drones
+               SET {common_pos}
+                   last_event_at   = ?,
+                   last_event_id   = ?
+             WHERE drone_id = ?
+            """,
+            (event.latitude, event.longitude, event.battery_pct,
+             event.event_time, event.event_id, event.drone_id),
+        )
+    elif t == EVT_RETURNED_TO_DEPOT:
+        # Operational trip complete.  Drone is back at depot, idle, with the
+        # trip counter incremented.
         cur.execute(
             f"""
             UPDATE drones
@@ -268,6 +290,25 @@ def _apply_drone_projection(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
             """,
             (DroneStatus.MAINTENANCE, event.event_time, event.event_id, event.drone_id),
         )
+    elif t == EVT_MAINTENANCE_COMPLETED:
+        # Service finished.  Drone returns to idle and clears any stale
+        # trip/leg references.  Battery may be restored if the event
+        # carries a new value (COALESCE preserves it otherwise).
+        cur.execute(
+            f"""
+            UPDATE drones
+               SET status          = ?,
+                   current_trip_id = NULL,
+                   current_leg_id  = NULL,
+                   {common_pos}
+                   last_event_at   = ?,
+                   last_event_id   = ?
+             WHERE drone_id = ?
+            """,
+            (DroneStatus.IDLE,
+             event.latitude, event.longitude, event.battery_pct,
+             event.event_time, event.event_id, event.drone_id),
+        )
     elif t == EVT_ERROR:
         cur.execute(
             """
@@ -302,6 +343,7 @@ def _apply_trip_projection(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
     from core.events import (
         EVT_DRONE_LAUNCHED,
         EVT_DELIVERY_COMPLETED,
+        EVT_RETURNED_TO_DEPOT,
         EVT_EMERGENCY_RETURN,
         EVT_PICKUP_COMPLETED,
         EVT_ERROR,
@@ -333,6 +375,21 @@ def _apply_trip_projection(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
             (event.event_time, event.event_id, event.trip_id),
         )
     elif t == EVT_DELIVERY_COMPLETED:
+        # Customer delivery is done, but the operational trip isn't finished
+        # until the drone returns to depot.  Increment legs_completed and
+        # keep status = in_flight.
+        cur.execute(
+            """
+            UPDATE trips
+               SET legs_completed = legs_completed + 1,
+                   last_event_at  = ?,
+                   last_event_id  = ?
+             WHERE trip_id = ?
+            """,
+            (event.event_time, event.event_id, event.trip_id),
+        )
+    elif t == EVT_RETURNED_TO_DEPOT:
+        # Leg 3 (dropoff → depot) finished.  Mark the trip completed.
         cur.execute(
             """
             UPDATE trips

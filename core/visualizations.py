@@ -33,6 +33,9 @@ CHART_FILENAMES = {
     "drone_utilization":        "drone_utilization.png",
     "battery_warnings":         "battery_warnings_by_drone.png",
     "battery_over_time":        "battery_over_time.png",
+    # Scenario-comparison chart.  Skipped automatically when only one (or
+    # zero) scenarios are present in the database.
+    "scenario_comparison":      "scenario_comparison.png",
 }
 
 
@@ -166,6 +169,49 @@ def _chart_battery_over_time(conn: sqlite3.Connection, out_path: str) -> str:
     return _save(fig, out_path)
 
 
+def _chart_scenario_comparison(conn: sqlite3.Connection, out_path: str) -> str:
+    """Grouped bar chart: operational event counts per scenario.
+
+    Works for one scenario (single group) as well as many.
+    """
+    rows = _fetch(conn,
+        """
+        SELECT scenario_name,
+               SUM(CASE WHEN event_type='battery_warning'      THEN 1 ELSE 0 END),
+               SUM(CASE WHEN event_type='route_deviation'      THEN 1 ELSE 0 END),
+               SUM(CASE WHEN event_type='emergency_return'     THEN 1 ELSE 0 END),
+               SUM(CASE WHEN event_type='maintenance_required' THEN 1 ELSE 0 END)
+          FROM delivery_events
+         WHERE scenario_name IS NOT NULL
+         GROUP BY scenario_name
+         ORDER BY scenario_name ASC
+        """
+    )
+    metrics = ["battery_warning", "route_deviation",
+               "emergency_return", "maintenance_required"]
+    scenarios = [r[0] for r in rows] or ["(none)"]
+    values = [
+        [r[1] for r in rows],
+        [r[2] for r in rows],
+        [r[3] for r in rows],
+        [r[4] for r in rows],
+    ] if rows else [[0], [0], [0], [0]]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    n_groups = len(scenarios)
+    n_bars = len(metrics)
+    bar_w = 0.8 / n_bars
+    for i, (m, vs) in enumerate(zip(metrics, values)):
+        xs = [j + (i - (n_bars - 1) / 2) * bar_w for j in range(n_groups)]
+        ax.bar(xs, vs, width=bar_w, label=m)
+    ax.set_xticks(range(n_groups))
+    ax.set_xticklabels(scenarios)
+    ax.set_title("Operational Event Counts by Scenario")
+    ax.set_ylabel("event count")
+    ax.legend(fontsize=8)
+    return _save(fig, out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,11 +226,12 @@ def generate_charts(
     os.makedirs(out_dir, exist_ok=True)
 
     builders = {
-        "event_counts":      _chart_event_counts,
-        "trip_outcomes":     _chart_trip_outcomes,
-        "drone_utilization": _chart_drone_utilization,
-        "battery_warnings":  _chart_battery_warnings,
-        "battery_over_time": _chart_battery_over_time,
+        "event_counts":        _chart_event_counts,
+        "trip_outcomes":       _chart_trip_outcomes,
+        "drone_utilization":   _chart_drone_utilization,
+        "battery_warnings":    _chart_battery_warnings,
+        "battery_over_time":   _chart_battery_over_time,
+        "scenario_comparison": _chart_scenario_comparison,
     }
 
     results: dict[str, str] = {}

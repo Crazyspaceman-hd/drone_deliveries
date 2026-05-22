@@ -57,7 +57,8 @@ not integrated into the current event flow.
 | `drone_launched` | A drone left the depot at the start of a leg. |
 | `telemetry_ping` | Position + battery sample mid-flight. |
 | `pickup_completed` | Drone reached the pickup location (end of leg 1). |
-| `delivery_completed` | Drone delivered the package (end of leg 2). |
+| `delivery_completed` | Drone delivered the package to the customer (end of leg 2). |
+| `returned_to_depot` | Drone landed back at the depot (end of leg 3); operational trip done. |
 | `battery_warning` | Battery dropped below a threshold mid-flight. |
 | `route_deviation` | Drone deviated from the expected route. |
 | `emergency_return` | Trip aborted; drone returned to depot. |
@@ -139,25 +140,28 @@ python run_analytics.py
   db_path:          data/delivery_system.sqlite
   drones:           3
   trips_requested:  10
-  trips_completed:  9
-  events_written:   176
+  trips_completed:  10
+  events_written:   245
   event_counts_by_type:
-    battery_warning             5
-    delivery_completed          9
+    battery_warning            10
+    delivery_completed         10
     drone_assigned             10
     drone_launched             10
-    emergency_return            1
     maintenance_completed       3
-    maintenance_required        2
+    maintenance_required        4
     order_created              10
     pickup_completed           10
-    route_deviation             8
-    telemetry_ping            108
-  jsonl_export:     data/events.jsonl (176 rows)
+    returned_to_depot          10
+    route_deviation             7
+    telemetry_ping            161
+  jsonl_export:     data/events.jsonl (245 rows)
 ```
 
-One trip was aborted via `emergency_return`; the related order ends up
-with `status = 'error'` (see Known limitations).
+Each trip is the full three-leg cycle: `drone_launched → pickup_completed
+→ delivery_completed → returned_to_depot`. Larger runs (e.g. 8 drones × 150
+trips) will surface `emergency_return` events; in those, the aborted trip
+ends after `emergency_return` with no `delivery_completed` or
+`returned_to_depot`.
 
 ---
 
@@ -182,6 +186,44 @@ sqlite3 data/delivery_system.sqlite < analytics/sql/drone_utilization.sql
 
 ---
 
+## Scenarios
+
+The simulator can run under different **operational scenarios** so the
+same event pipeline can answer comparative questions like *"would drone
+delivery make sense in dense urban, suburban, or rural conditions?"*. A
+scenario is a small bag of knobs (telemetry density, battery drain,
+emergency-return probability, maintenance duration, etc.) — switching
+scenarios does **not** change the event vocabulary or the schema; it
+just shifts the rates and quantities the simulator emits.
+
+Built-in scenarios (see `core/scenarios.py`):
+
+| Scenario | Telemetry | Battery drain | Route deviations | Emergency returns | Maintenance |
+|---|---|---|---|---|---|
+| `urban_dense` | denser (+2 pings/leg) | gentler (×0.8) | more likely (10%) | rare (2%) | short cycles (180 s) |
+| `suburban_standard` | baseline | baseline (×1.0) | baseline (5%) | baseline (5%) | baseline (240 s) |
+| `rural_extended` | baseline | harder (×1.6) | rare (2%) | more likely (10%) | longer cycles (360 s) |
+
+Run several scenarios into the same database and compare:
+
+```bash
+python run_scenarios.py --reset --scenarios urban_dense suburban_standard rural_extended \
+    --drones 3 --trips 50 --seed 42
+
+python run_analytics.py            # includes scenario_summary.sql
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+```
+
+Every event and every trip carries a `scenario_name` column so
+`analytics/sql/scenario_summary.sql` can group cleanly. A
+`scenario_comparison.png` chart is added to the standard PNG set when
+scenario-tagged events are present.
+
+The project is increasingly framed as **comparative operational analysis**
+on top of a synthetic event stream, not a routing optimiser.
+
+---
+
 ## Charts
 
 Static PNG charts can be generated from the SQLite store with matplotlib.
@@ -201,11 +243,19 @@ Charts produced:
 | `drone_utilization.png` | Bar chart of `trips_flown` per drone. |
 | `battery_warnings_by_drone.png` | Count of `battery_warning` events per drone. |
 | `battery_over_time.png` | Per-drone line plot of `battery_pct` vs `event_time`. |
+| `scenario_comparison.png` | Grouped bar chart: warnings, deviations, emergencies, maintenance per scenario. |
 
 ---
 
 ## Design notes
 
+- **Delivery completion vs. operational trip completion.** `delivery_completed`
+  marks the moment the package reached the customer — the order is
+  `delivered` at that point. The drone is still in flight on its return
+  leg, so the trip stays `in_flight` and the drone stays `flying` until
+  `returned_to_depot` fires. Analytical questions about customer SLA use
+  `delivery_completed`; questions about fleet/drone utilisation use
+  `returned_to_depot`.
 - **SQLite is the local operational store.** It is the source of truth
   for everything `run_analytics.py` queries. No external service is
   required to run the project.
@@ -239,9 +289,6 @@ Charts produced:
   a round-robin over the idle pool — not a real optimizer.
 - **No cloud pipeline yet.** Phase 3 stops at portable JSONL on local
   disk.
-- **No return-to-depot leg event.** The simulator models trips as
-  depot → pickup → dropoff and stops there. As a result `trips.legs_completed`
-  caps at 2 for completed trips even though `trip_legs` defines three legs.
 - **Order/trip semantics on abort.** `emergency_return` maps the order
   to `OrderStatus.ERROR` (no dedicated `aborted` enum value yet) and the
   trip to `aborted`.
@@ -266,8 +313,6 @@ simplified dispatcher, not a real fleet optimizer.
 
 - Replace round-robin dispatch with something workload-aware
   (e.g. nearest-idle, battery-weighted).
-- Add a `return_to_depot_completed` event so trip-leg-3 has its own
-  milestone and `legs_completed` reaches 3.
 - Add chunked / streaming JSONL export for runs that don't fit in memory.
 - Add a small `pytest` suite covering schema setup, `emit()`
   projections, and a single-trip simulator path.
