@@ -97,7 +97,18 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
             legs_completed INTEGER NOT NULL DEFAULT 0,
             last_event_at  TIMESTAMP,
             last_event_id  TEXT,
-            scenario_name  TEXT       -- operational scenario this trip belongs to
+            scenario_name  TEXT,      -- operational scenario this trip belongs to
+
+            -- ── Synthetic economics (populated at end-of-trip; see simulator) ──
+            -- These are illustrative numbers for comparative analysis, NOT a
+            -- real cost model.  Aborted trips can carry costs without revenue.
+            trip_distance_km                  REAL,
+            estimated_energy_cost             REAL,
+            estimated_maintenance_cost        REAL,
+            estimated_operational_cost        REAL,
+            estimated_revenue                 REAL,
+            estimated_profit                  REAL,
+            emergency_return_penalty_applied  REAL
         )
     """)
 

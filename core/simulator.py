@@ -32,6 +32,7 @@ projection is a Phase 3+ decision.
 
 from __future__ import annotations
 
+import math
 import random
 import sqlite3
 import uuid
@@ -175,6 +176,53 @@ def _insert_leg_row(
 # Telemetry interpolation
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance between two (lat, lon) points in kilometres."""
+    R = 6371.0088
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(h))
+
+
+def _compute_economics(
+    sc: Scenario,
+    *,
+    distance_km: float,
+    maintenance_events: int,
+    aborted: bool,
+) -> dict:
+    """Apply Scenario knobs to a trip's mechanical facts.
+
+    Formulas are intentionally transparent:
+        energy_cost     = distance_km * avg_kwh_per_km * energy_cost_per_kwh
+        maintenance     = maintenance_events * maintenance_cost_per_event
+        labor           = labor_cost_per_delivery        (per attempted trip)
+        depreciation    = drone_depreciation_per_trip    (per attempted trip)
+        emergency_pen   = emergency_return_penalty       (only if aborted)
+        revenue         = delivery_fee  (only on completed trips, else 0)
+        operational     = energy + maintenance + labor + depreciation + penalty
+        profit          = revenue - operational
+    """
+    energy_cost  = distance_km * sc.avg_kwh_per_km * sc.energy_cost_per_kwh
+    maint_cost   = maintenance_events * sc.maintenance_cost_per_event
+    penalty      = sc.emergency_return_penalty if aborted else 0.0
+    operational  = (energy_cost + maint_cost + sc.labor_cost_per_delivery
+                    + sc.drone_depreciation_per_trip + penalty)
+    revenue      = 0.0 if aborted else sc.delivery_fee
+    profit       = revenue - operational
+    return {
+        "trip_distance_km":                 round(distance_km, 4),
+        "estimated_energy_cost":            round(energy_cost, 4),
+        "estimated_maintenance_cost":       round(maint_cost, 4),
+        "estimated_operational_cost":       round(operational, 4),
+        "estimated_revenue":                round(revenue, 4),
+        "estimated_profit":                 round(profit, 4),
+        "emergency_return_penalty_applied": round(penalty, 4),
+    }
+
+
 def _interpolate(start: tuple[float, float], end: tuple[float, float], steps: int):
     """Yield (lat, lon) tuples, exclusive of start, inclusive of end."""
     for i in range(1, steps + 1):
@@ -317,6 +365,7 @@ def run_simulation(
         drone_status[drone_id] = "flying"
         order_id = str(uuid.uuid4())
         trip_id  = str(uuid.uuid4())
+        trip_maintenance_events = 0    # counted by the post-trip maint block
 
         store     = rng.choice(STORE_NAMES)
         pickup    = (rng.uniform(*PICKUP_LAT_RANGE),  rng.uniform(*PICKUP_LON_RANGE))
@@ -421,6 +470,7 @@ def run_simulation(
             # returning to service — matches the projection logic that already
             # transitions the drone to MAINTENANCE on this event.
             schedule_maintenance(drone_id, "post_emergency_return")
+            trip_maintenance_events += 1
         else:
             _emit(
                 EVT_DELIVERY_COMPLETED, drone_id=drone_id, trip_id=trip_id, leg_id=leg2_id,
@@ -461,9 +511,54 @@ def run_simulation(
                     dt_seconds=30,
                 )
                 schedule_maintenance(drone_id, reason)
+                trip_maintenance_events += 1
             # If the drone is already in maintenance (e.g. after an emergency
             # return), don't re-emit the request — the existing completion
             # event already covers it.
+
+        # ── compute & persist trip economics ────────────────────────────────
+        d1 = _haversine_km(depot_pt, pickup)
+        if emergency:
+            d2 = _haversine_km(pickup, depot_pt)   # leg 2 re-routed to depot
+            d3 = 0.0                               # no leg 3
+        else:
+            d2 = _haversine_km(pickup, dropoff)
+            d3 = _haversine_km(dropoff, depot_pt)
+        distance_km = d1 + d2 + d3
+        econ = _compute_economics(
+            sc,
+            distance_km=distance_km,
+            maintenance_events=trip_maintenance_events,
+            aborted=emergency,
+        )
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                """
+                UPDATE trips
+                   SET trip_distance_km                 = ?,
+                       estimated_energy_cost            = ?,
+                       estimated_maintenance_cost       = ?,
+                       estimated_operational_cost       = ?,
+                       estimated_revenue                = ?,
+                       estimated_profit                 = ?,
+                       emergency_return_penalty_applied = ?
+                 WHERE trip_id = ?
+                """,
+                (
+                    econ["trip_distance_km"],
+                    econ["estimated_energy_cost"],
+                    econ["estimated_maintenance_cost"],
+                    econ["estimated_operational_cost"],
+                    econ["estimated_revenue"],
+                    econ["estimated_profit"],
+                    econ["emergency_return_penalty_applied"],
+                    trip_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     # Count what actually landed in the DB as a cross-check.
     conn = sqlite3.connect(db_path)

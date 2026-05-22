@@ -36,6 +36,8 @@ CHART_FILENAMES = {
     # Scenario-comparison chart.  Skipped automatically when only one (or
     # zero) scenarios are present in the database.
     "scenario_comparison":      "scenario_comparison.png",
+    # Synthetic profit + cost per scenario.
+    "scenario_profitability":   "scenario_profitability.png",
 }
 
 
@@ -212,6 +214,45 @@ def _chart_scenario_comparison(conn: sqlite3.Connection, out_path: str) -> str:
     return _save(fig, out_path)
 
 
+def _chart_scenario_profitability(conn: sqlite3.Connection, out_path: str) -> str:
+    """Bar chart: synthetic revenue, operational cost, and profit per scenario."""
+    rows = _fetch(conn,
+        """
+        SELECT scenario_name,
+               COALESCE(SUM(estimated_revenue),           0),
+               COALESCE(SUM(estimated_operational_cost),  0),
+               COALESCE(SUM(estimated_profit),            0)
+          FROM trips
+         WHERE scenario_name IS NOT NULL
+         GROUP BY scenario_name
+         ORDER BY scenario_name ASC
+        """
+    )
+    scenarios = [r[0] for r in rows] or ["(none)"]
+    revenue   = [float(r[1]) for r in rows] if rows else [0]
+    op_cost   = [float(r[2]) for r in rows] if rows else [0]
+    profit    = [float(r[3]) for r in rows] if rows else [0]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    n_groups = len(scenarios)
+    series = [
+        ("revenue",          revenue, "seagreen"),
+        ("operational_cost", op_cost, "indianred"),
+        ("profit",           profit,  "steelblue"),
+    ]
+    bar_w = 0.8 / len(series)
+    for i, (label, vals, color) in enumerate(series):
+        xs = [j + (i - (len(series) - 1) / 2) * bar_w for j in range(n_groups)]
+        ax.bar(xs, vals, width=bar_w, label=label, color=color)
+    ax.axhline(0, color="black", linewidth=0.6)
+    ax.set_xticks(range(n_groups))
+    ax.set_xticklabels(scenarios)
+    ax.set_title("Synthetic Profitability by Scenario (illustrative)")
+    ax.set_ylabel("synthetic units (revenue / cost / profit)")
+    ax.legend(fontsize=8)
+    return _save(fig, out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,12 +267,13 @@ def generate_charts(
     os.makedirs(out_dir, exist_ok=True)
 
     builders = {
-        "event_counts":        _chart_event_counts,
-        "trip_outcomes":       _chart_trip_outcomes,
-        "drone_utilization":   _chart_drone_utilization,
-        "battery_warnings":    _chart_battery_warnings,
-        "battery_over_time":   _chart_battery_over_time,
-        "scenario_comparison": _chart_scenario_comparison,
+        "event_counts":           _chart_event_counts,
+        "trip_outcomes":          _chart_trip_outcomes,
+        "drone_utilization":      _chart_drone_utilization,
+        "battery_warnings":       _chart_battery_warnings,
+        "battery_over_time":      _chart_battery_over_time,
+        "scenario_comparison":    _chart_scenario_comparison,
+        "scenario_profitability": _chart_scenario_profitability,
     }
 
     results: dict[str, str] = {}

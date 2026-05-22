@@ -224,6 +224,64 @@ on top of a synthetic event stream, not a routing optimiser.
 
 ---
 
+## Cost & feasibility modeling
+
+Each scenario also carries a small bag of **synthetic economics** knobs —
+energy cost per kWh, kWh per km, maintenance cost per event, labor cost
+per delivery, drone depreciation, emergency-return penalty, delivery fee
+— and the simulator computes a per-trip economics row at trip end using
+transparent formulas (see `_compute_economics` in `core/simulator.py`).
+
+> **Disclaimer.** Costs and revenue here are **illustrative synthetic
+> units**, not a real cost model. The goal is comparative feasibility
+> ("which scenarios bleed more?"), not financial forecasting.
+
+Persisted to the `trips` table per trip:
+
+```
+trip_distance_km, estimated_energy_cost, estimated_maintenance_cost,
+estimated_operational_cost, estimated_revenue, estimated_profit,
+emergency_return_penalty_applied
+```
+
+Formulas (all per trip):
+
+```
+energy_cost     = distance_km × avg_kwh_per_km × energy_cost_per_kwh
+maintenance     = maintenance_events × maintenance_cost_per_event
+operational     = energy + maintenance + labor + depreciation + emergency_penalty
+revenue         = delivery_fee  (0 if aborted)
+profit          = revenue − operational
+```
+
+Aborted trips still incur operational cost (and the emergency-return
+penalty) but earn no revenue, so they show up as negative-profit rows in
+`analytics/sql/scenario_economics.sql`.
+
+Example findings at `--trips 100 --seed 42` (synthetic units):
+
+| scenario | completed | aborted | total_profit | avg/trip | emergency_returns |
+|---|---:|---:|---:|---:|---:|
+| `urban_dense` | 100 | 0 | -780 | -7.80 | 0 |
+| `suburban_standard` | 95 | 5 | -1,197 | -11.97 | 5 |
+| `rural_extended` | 84 | 16 | -3,906 | -39.06 | 16 |
+
+Same direction as the operational analytics: urban completes more, costs
+less, and absorbs fewer emergency-return penalties. Rural carries roughly
+**5× the per-trip loss** of urban under these knobs.
+
+Commands:
+
+```bash
+python run_scenarios.py --reset \
+    --scenarios urban_dense suburban_standard rural_extended \
+    --trips 100 --seed 42
+python run_analytics.py             # includes scenario_economics.sql
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+```
+
+---
+
 ## Charts
 
 Static PNG charts can be generated from the SQLite store with matplotlib.
@@ -244,6 +302,7 @@ Charts produced:
 | `battery_warnings_by_drone.png` | Count of `battery_warning` events per drone. |
 | `battery_over_time.png` | Per-drone line plot of `battery_pct` vs `event_time`. |
 | `scenario_comparison.png` | Grouped bar chart: warnings, deviations, emergencies, maintenance per scenario. |
+| `scenario_profitability.png` | Revenue / operational cost / profit by scenario (synthetic units). |
 
 ---
 

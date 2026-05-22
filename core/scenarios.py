@@ -59,6 +59,18 @@ class Scenario:
     # How long a maintenance cycle takes in simulated seconds.
     maintenance_duration_seconds: int
 
+    # ── Synthetic economics ────────────────────────────────────────────────
+    # All in arbitrary "USD" units.  These are *illustrative* knobs for
+    # comparative analysis, not a real cost model.  Each is applied via a
+    # simple, transparent formula in the simulator (see _compute_economics).
+    energy_cost_per_kwh:         float
+    avg_kwh_per_km:              float
+    maintenance_cost_per_event:  float
+    labor_cost_per_delivery:     float
+    drone_depreciation_per_trip: float
+    emergency_return_penalty:    float
+    delivery_fee:                float   # revenue per completed delivery
+
 
 # ── Built-in scenarios ──────────────────────────────────────────────────────
 
@@ -76,6 +88,13 @@ _SCENARIOS: dict[str, Scenario] = {
         battery_warning_threshold    = 30.0,
         maintenance_chance           = 0.08,
         maintenance_duration_seconds = 240,
+        energy_cost_per_kwh          = 0.15,
+        avg_kwh_per_km               = 0.10,
+        maintenance_cost_per_event   = 50.0,
+        labor_cost_per_delivery      = 5.0,
+        drone_depreciation_per_trip  = 2.0,
+        emergency_return_penalty     = 25.0,
+        delivery_fee                 = 20.0,
     ),
 
     # Short trips, dense telemetry, more weaving around obstacles, gentler
@@ -91,6 +110,13 @@ _SCENARIOS: dict[str, Scenario] = {
         battery_warning_threshold    = 25.0,
         maintenance_chance           = 0.06,
         maintenance_duration_seconds = 180,
+        energy_cost_per_kwh          = 0.15,
+        avg_kwh_per_km               = 0.08,
+        maintenance_cost_per_event   = 40.0,
+        labor_cost_per_delivery      = 4.0,
+        drone_depreciation_per_trip  = 2.0,
+        emergency_return_penalty     = 15.0,
+        delivery_fee                 = 18.0,
     ),
 
     # Long trips, fewer obstacles, harder on the battery, more aborts.
@@ -105,6 +131,13 @@ _SCENARIOS: dict[str, Scenario] = {
         battery_warning_threshold    = 35.0,
         maintenance_chance           = 0.12,
         maintenance_duration_seconds = 360,
+        energy_cost_per_kwh          = 0.15,
+        avg_kwh_per_km               = 0.13,
+        maintenance_cost_per_event   = 70.0,
+        labor_cost_per_delivery      = 8.0,
+        drone_depreciation_per_trip  = 3.0,
+        emergency_return_penalty     = 60.0,
+        delivery_fee                 = 25.0,
     ),
 }
 
