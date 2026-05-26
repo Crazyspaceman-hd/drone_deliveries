@@ -73,6 +73,19 @@ class Scenario:
 
 
 # ── Built-in scenarios ──────────────────────────────────────────────────────
+#
+# Each knob falls into one of two categories (see docs/assumptions.md and
+# core/assumptions.py for the machine-readable mapping):
+#   * publicly_informed — picked to land in a plausible public range
+#         (urban/rural distances, battery alert bands, per-km energy,
+#         retail electricity, last-mile fees, field-service costs).
+#   * synthetic — invented for comparative behaviour (telemetry density,
+#         drain multiplier, emergency / route_deviation / maintenance
+#         probabilities, abort penalty, labour, depreciation).
+#
+# Direction matters more than absolute values: urban_dense is "shorter
+# trips, gentler drain, fewer aborts, more route weaving"; rural_extended
+# is "longer trips, harder on battery, more aborts, costlier maintenance".
 
 # suburban_standard is the historical default — its knobs reproduce the
 # Phase 8 hard-coded behaviour exactly (so existing tests stay deterministic).

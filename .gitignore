@@ -27,22 +27,21 @@ Thumbs.db
 *.tiff
 
 # === Data artifacts ===
-scripts/data/processed/
-data/logs/
-data/processed/
-scripts/data/raw/elevation.tif
-scripts/data/raw/*.tif
-scripts/data/processed/*.npy
-scripts/data/raw/USGS_*.tif
+# data/ holds generated SQLite databases and run logs — reproducible on demand.
+data/
 *.sqlite
 *.db
-data/*.jsonl
 
 # === Test / cache ===
 .pytest_cache/
 
 # === Generated reporting artifacts ===
 outputs/
+
+# === Frontend (Phase 18) ===
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
 # === Path visualization outputs ===
 *.gif

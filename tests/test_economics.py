@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from core.simulator import run_simulation
 
 
@@ -54,6 +56,7 @@ def test_profit_calculations_deterministic(tmp_path: Path):
     assert a == b
 
 
+@pytest.mark.slow
 def test_aborted_trips_can_be_unprofitable(tmp_path: Path):
     """At least one aborted trip in rural_extended should run negative.
 
@@ -78,6 +81,7 @@ def test_aborted_trips_can_be_unprofitable(tmp_path: Path):
     )
 
 
+@pytest.mark.slow
 def test_scenarios_diverge_economically(tmp_path: Path):
     """Different scenarios must produce different total profits."""
     db = tmp_path / "multi.sqlite"
@@ -98,6 +102,7 @@ def test_scenarios_diverge_economically(tmp_path: Path):
     assert len(set(profits.values())) == 3, f"profits collided: {profits}"
 
 
+@pytest.mark.slow
 def test_scenario_economics_sql_runs(tmp_path: Path):
     """analytics/sql/scenario_economics.sql executes and returns per-scenario rows."""
     db = tmp_path / "econ.sqlite"
@@ -122,6 +127,7 @@ def test_scenario_economics_sql_runs(tmp_path: Path):
         assert must_have in headers, f"missing column: {must_have}"
 
 
+@pytest.mark.slow
 def test_profitability_chart_generated(seed42_db: Path, tmp_path: Path):
     """generate_charts produces scenario_profitability.png even with a single scenario."""
     from core.visualizations import generate_charts

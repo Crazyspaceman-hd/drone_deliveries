@@ -29,6 +29,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--export-jsonl", dest="export_jsonl", default=None,
                         help="If given, after the run export delivery_events "
                              "to this path as one JSON object per line.")
+    parser.add_argument("--no-transforms", dest="run_transforms",
+                        action="store_false", default=True,
+                        help="Skip the post-simulation transform pipeline "
+                             "(economics + hybrid).  Derived columns will "
+                             "be NULL until you run `python run_transforms.py`.")
     args = parser.parse_args(argv)
 
     if args.reset and os.path.exists(args.db):
@@ -52,6 +57,12 @@ def main(argv: list[str] | None = None) -> int:
     print("  event_counts_by_type:")
     for ev_type, n in sorted(summary["event_counts_by_type"].items()):
         print(f"    {ev_type:<22} {n:>6}")
+
+    if args.run_transforms:
+        from transforms.runner import run_pipeline
+        tx = run_pipeline(args.db, run_id=summary["run_id"])
+        names = ", ".join(r["transform_name"] for r in tx)
+        print(f"  transforms_run:   {names}")
 
     if args.export_jsonl:
         exported = export_events_to_jsonl(args.db, args.export_jsonl)

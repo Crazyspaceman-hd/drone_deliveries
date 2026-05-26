@@ -8,6 +8,11 @@ import pytest
 from core.scenarios import (
     DEFAULT_SCENARIO_NAME, Scenario, get_scenario, list_scenarios,
 )
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))   # so 'baselines' is importable
+from baselines import expected_events            # noqa: E402
+
 from core.simulator import run_simulation
 
 
@@ -49,7 +54,10 @@ def test_default_scenario_is_suburban_standard(tmp_path: Path):
     db = tmp_path / "default.sqlite"
     summ = run_simulation(db_path=str(db), n_drones=3, n_trips=10, seed=42)
     assert summ["scenario"]       == "suburban_standard"
-    assert summ["events_written"] == 245     # Phase 8 baseline
+    # Pinned to the current simulator version via tests/baselines.py.
+    # Bump SIMULATOR_VERSION in core/runs.py + add an entry there when the
+    # operational event stream legitimately changes.
+    assert summ["events_written"] == expected_events(seed=42)
 
 
 def test_scenarios_produce_different_outputs(tmp_path: Path):

@@ -11,3 +11,18 @@ strm
 
 # Test runner (Phase 5)
 pytest
+
+# Analytical export + query layer (Phase 16).
+# pyarrow writes the columnar Parquet files; duckdb queries them locally.
+# pandas is used only for one-line DataFrame round-trips; it is widely
+# available via pyarrow's wheel already on most platforms.
+pyarrow
+duckdb
+pandas
+
+# Workbench backend (Phase 18).
+# Thin FastAPI wrapper over the existing core modules; uvicorn runs it
+# locally.  No production hardening — local-first analytical workbench only.
+fastapi
+uvicorn
+httpx     # also the FastAPI TestClient transport

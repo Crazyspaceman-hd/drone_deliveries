@@ -100,6 +100,11 @@ class DeliveryEvent:
     # emitted outside a scenario (e.g. ad-hoc create_order calls in tests).
     scenario_name: Optional[str] = None
 
+    # Lineage tag — set by the simulator on every event it emits so analytics
+    # can attribute any row back to a specific simulation_runs entry.  Null
+    # for events emitted outside a tracked run.
+    run_id: Optional[str] = None
+
     event_id:    str = field(default_factory=_new_uuid)
     event_time:  str = field(default_factory=_now_utc)
     ingested_at: str = field(default_factory=_now_utc)

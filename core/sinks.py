@@ -82,7 +82,7 @@ _EVENT_COLUMNS = (
     "event_id", "event_time", "ingested_at",
     "drone_id", "trip_id", "leg_id", "event_type",
     "latitude", "longitude", "battery_pct", "payload_json",
-    "scenario_name",
+    "scenario_name", "run_id",
 )
 
 
@@ -117,3 +117,147 @@ def export_events_to_jsonl(
         for row in rows:
             sink.write(dict(zip(_EVENT_COLUMNS, row)))
         return sink.count
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Run-aware output path helper (Phase 15)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_output_dir(run_id: str, base: str = "outputs/runs") -> str:
+    """Return (and create) the per-run output directory.
+
+    Format: ``<base>/run_id=<run_id>/`` (Hive-style key=value so glob tools
+    and lakehouse loaders pick the partition up automatically).
+    """
+    path = os.path.join(base, f"run_id={run_id}")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def export_run_events_to_jsonl(
+    db_path: str, run_id: str, out_path: Optional[str] = None,
+) -> tuple[int, str]:
+    """Export just one run's events to JSONL.
+
+    Returns (row_count, output_path).  If ``out_path`` is None, writes to
+    ``outputs/runs/run_id=<run_id>/events.jsonl``.
+    """
+    if out_path is None:
+        out_path = os.path.join(run_output_dir(run_id), "events.jsonl")
+    n = export_events_to_jsonl(db_path, out_path, where=f"run_id = '{run_id}'")
+    return n, out_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parquet export (Phase 16)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Parquet is the analytical-portability layer.  SQLite stays the operational
+# source of truth; Parquet is what an analyst or downstream OLAP engine
+# (DuckDB, BigQuery external tables, Athena, Snowflake stages) consumes.
+#
+# We use pandas + pyarrow because it is the simplest two-line round trip
+# from a sqlite cursor to a Parquet file.  Both deps are optional from the
+# project's perspective — if missing, the helpers raise a clear ImportError
+# rather than crashing somewhere deeper.
+
+# Tables we export per run.  Order matters only for predictability in the
+# returned summary dict.
+_RUN_PARQUET_TABLES = (
+    "delivery_events",
+    "trips",
+    "orders",
+    "simulation_runs",
+)
+
+
+def _require_parquet_stack():
+    """Raise a clear ImportError if pandas/pyarrow aren't available."""
+    try:
+        import pandas        # noqa: F401
+        import pyarrow       # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "Parquet export requires `pandas` and `pyarrow`. "
+            "Install them via `pip install -r requirements.txt`."
+        ) from exc
+
+
+def _export_table_to_parquet(
+    db_path: str, table: str, out_path: str, *, where: Optional[str] = None,
+) -> int:
+    """Pull one table (optionally filtered) into a Parquet file.
+
+    Returns the number of rows written.
+    """
+    import pandas as pd  # local import: keeps module load light
+    conn = sqlite3.connect(db_path)
+    try:
+        sql = f"SELECT * FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        df = pd.read_sql_query(sql, conn)
+    finally:
+        conn.close()
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    df.to_parquet(out_path, engine="pyarrow", index=False)
+    return len(df)
+
+
+def export_run_to_parquet(
+    db_path: str,
+    run_id: str,
+    out_dir: Optional[str] = None,
+) -> dict:
+    """Dump every table for ``run_id`` to a per-run Parquet directory.
+
+    Output layout::
+
+        <out_dir or outputs/runs/run_id=<id>>/parquet/
+            delivery_events.parquet
+            trips.parquet
+            orders.parquet
+            simulation_runs.parquet
+
+    Returns a dict like::
+
+        {"run_id":   "...",
+         "out_dir":  "outputs/runs/run_id=.../parquet",
+         "rows":     {"delivery_events": 156, "trips": 10, ...},
+         "files":    {"delivery_events": "...delivery_events.parquet", ...}}
+
+    Raises ImportError if pandas/pyarrow aren't installed.  No SQLite
+    schema is altered; this is a pure export.
+    """
+    _require_parquet_stack()
+    if out_dir is None:
+        out_dir = os.path.join(run_output_dir(run_id), "parquet")
+    os.makedirs(out_dir, exist_ok=True)
+
+    rows:  dict[str, int] = {}
+    files: dict[str, str] = {}
+    for table in _RUN_PARQUET_TABLES:
+        out_path = os.path.join(out_dir, f"{table}.parquet")
+        where = (f"run_id = '{run_id}'" if table != "simulation_runs"
+                 else f"run_id = '{run_id}'")
+        # simulation_runs has run_id as its PK, so the filter is also safe
+        # there and gives the analyst a one-row provenance block.
+        rows[table]  = _export_table_to_parquet(db_path, table, out_path, where=where)
+        files[table] = out_path
+
+    return {"run_id": run_id, "out_dir": out_dir, "rows": rows, "files": files}
+
+
+def export_all_runs_to_parquet(
+    db_path: str, base_dir: str = "outputs/runs",
+) -> list[dict]:
+    """Convenience: export every simulation_runs row in db_path."""
+    conn = sqlite3.connect(db_path)
+    try:
+        run_ids = [r[0] for r in conn.execute(
+            "SELECT run_id FROM simulation_runs ORDER BY created_at ASC"
+        ).fetchall()]
+    finally:
+        conn.close()
+    return [export_run_to_parquet(db_path, rid) for rid in run_ids]

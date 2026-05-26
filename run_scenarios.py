@@ -48,6 +48,16 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Known: {', '.join(list_scenarios())}")
     parser.add_argument("--reset",     action="store_true",
                         help="Remove the SQLite file before running.")
+    parser.add_argument("--export-parquet", dest="export_parquet",
+                        action="store_true",
+                        help="After each run, export its per-run tables to "
+                             "outputs/runs/run_id=<id>/parquet/")
+    parser.add_argument("--no-transforms", dest="run_transforms",
+                        action="store_false", default=True,
+                        help="Skip the post-simulation transform pipeline. "
+                             "By default transforms (economics, hybrid) run "
+                             "automatically per simulation so derived columns "
+                             "are populated for the API / UI.")
     args = parser.parse_args(argv)
 
     if args.reset and os.path.exists(args.db):
@@ -69,6 +79,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  trips_requested={summ['trips_requested']:>4}  "
               f"trips_completed={summ['trips_completed']:>4}  "
               f"events_written={summ['events_written']:>5}")
+
+        # Phase 20: derived columns are populated automatically by
+        # run_simulation() unless the caller passes --no-transforms.
+
+        if args.export_parquet:
+            # Lazy import: only require pyarrow/pandas when the user asks.
+            from core.sinks import export_run_to_parquet
+            res = export_run_to_parquet(args.db, summ["run_id"])
+            total_rows = sum(res["rows"].values())
+            print(f"  parquet_export:   {res['out_dir']} ({total_rows} rows)")
 
     # Compact comparison table.
     print()

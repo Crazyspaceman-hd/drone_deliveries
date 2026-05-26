@@ -28,15 +28,15 @@ def _insert_event_row(cur: sqlite3.Cursor, event: DeliveryEvent) -> None:
             event_id, event_time, ingested_at,
             drone_id, trip_id, leg_id, event_type,
             latitude, longitude, battery_pct, payload_json,
-            scenario_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            scenario_name, run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.event_id, event.event_time, event.ingested_at,
             event.drone_id, event.trip_id, event.leg_id, event.event_type,
             event.latitude, event.longitude, event.battery_pct,
             event.payload_json,
-            event.scenario_name,
+            event.scenario_name, event.run_id,
         ),
     )
 

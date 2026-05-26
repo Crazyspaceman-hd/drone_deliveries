@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from core.visualizations import CHART_FILENAMES, generate_charts
 
 
+@pytest.mark.slow
 def test_generate_charts(seed42_db: Path, tmp_path: Path):
     out_dir = tmp_path / "charts"
     paths = generate_charts(db_path=str(seed42_db), out_dir=str(out_dir))
