@@ -1,0 +1,355 @@
+/* Deliberately plain.  No gradients, no shadows, no UI framework. */
+
+:root {
+  --bg:       #fafafa;
+  --panel:    #ffffff;
+  --border:   #d8d8d8;
+  --muted:    #666;
+  --text:     #222;
+  --accent:   #3a5d8a;
+  --accent-bg:#eef2f7;
+  --ok:       #2e7d32;
+  --warn:     #b26a00;
+  --err:      #b00020;
+  --best-bg:  #eaf4ea;
+  --worst-bg: #fbeceb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.app {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px 20px 60px;
+}
+
+.app-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.app-header .lede {
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────────── */
+
+.primary-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+.primary-nav .nav-link {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  text-decoration: none;
+}
+.primary-nav .nav-link:hover {
+  color: var(--text);
+  background: var(--accent-bg);
+}
+.primary-nav .nav-link.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.app-main {
+  min-height: 60vh;
+}
+
+.app-footer {
+  margin-top: 40px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+/* ── Section titles ─────────────────────────────────────────────────────── */
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.section-title:first-of-type { margin-top: 0; }
+
+.section-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 18px 0 6px;
+  color: var(--text);
+}
+
+.section-lead {
+  margin: 0 0 14px;
+  max-width: 70ch;
+}
+
+/* ── Panels, tables, badges ─────────────────────────────────────────────── */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th, td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  font-weight: 600;
+  color: var(--muted);
+  background: #f3f3f3;
+}
+tbody tr:hover { background: #f6f8fb; }
+tbody tr.row-selected { background: var(--accent-bg); }
+tbody tr.row-selected:hover { background: var(--accent-bg); }
+
+table.kv td {
+  border-bottom: 1px solid #eee;
+}
+table.kv td:first-child { width: 14em; }
+
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  background: #fafafa;
+  color: var(--muted);
+  border-radius: 2px;
+}
+.tag.ok    { color: var(--ok);   border-color: var(--ok); }
+.tag.warn  { color: var(--warn); border-color: var(--warn); }
+.tag.err   { color: var(--err);  border-color: var(--err); }
+
+/* ── Overview cards ─────────────────────────────────────────────────────── */
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 8px 0 16px;
+}
+.overview-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+}
+.overview-card h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.overview-card p { margin: 0; font-size: 13px; }
+
+.start-here {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.reproduce {
+  margin-top: 24px;
+  background: #f3f3f3;
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.reproduce summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--muted);
+}
+.reproduce pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* ── Finding cards (MainFinding page) ───────────────────────────────────── */
+
+.finding-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 0 0 16px;
+}
+.finding-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  padding: 12px 14px;
+}
+.finding-card.ok   { border-left-color: var(--ok); }
+.finding-card.warn { border-left-color: var(--warn); }
+.finding-card.err  { border-left-color: var(--err); }
+
+.finding-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.finding-headline {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.empty-cmd {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  background: #f3f3f3;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* ── Empty states ───────────────────────────────────────────────────────── */
+
+.empty-state {
+  background: #fdfaf2;
+  border: 1px solid #e8d8a8;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+.empty-state pre {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+/* ── Domain × Scale matrix ──────────────────────────────────────────────── */
+
+.scenario-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+.scenario-tab {
+  appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.scenario-tab.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.matrix-wrap { overflow-x: auto; }
+.matrix-table th, .matrix-table td {
+  text-align: right;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.matrix-table th.row-head,
+.matrix-table thead th:first-child {
+  text-align: left;
+}
+.matrix-table td.best   { background: var(--best-bg);  font-weight: 600; }
+.matrix-table td.worst  { background: var(--worst-bg); font-weight: 600; }
+
+/* ── Lineage table ──────────────────────────────────────────────────────── */
+
+.lineage-table td.params-cell {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+/* ── Generic shared ─────────────────────────────────────────────────────── */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.metric {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  background: var(--panel);
+}
+.metric .label { color: var(--muted); font-size: 12px; }
+.metric .value { font-size: 18px; font-weight: 600; }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 14px;
+}
+.chart-grid figure {
+  margin: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+.chart-grid figure.chart-missing {
+  background: #fbf7e8;
+  min-height: 60px;
+}
+.chart-grid figcaption {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.chart-grid img { width: 100%; display: block; }
+
+.error { color: var(--err); }
+.muted { color: var(--muted); }
+.mono  { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+.numpos { color: var(--ok); }
+.numneg { color: var(--err); }
