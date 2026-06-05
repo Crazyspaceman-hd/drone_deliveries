@@ -203,6 +203,67 @@ def test_domain_scale_matrix_shape(workbench):
             assert k in cell
 
 
+def test_volume_sensitivity_endpoint_shape(workbench):
+    r = workbench["client"].get("/analytics/volume-sensitivity")
+    assert r.status_code == 200
+    body = r.json()
+    for k in ("rows", "capacity_model", "capacity_assumptions",
+              "sweep_points", "registry_version", "domains",
+              "best_row", "worst_row"):
+        assert k in body, f"missing key: {k}"
+    assert body["capacity_model"] == "pilot_capacity"   # Phase 28 default
+    assert len(body["sweep_points"]) >= 10
+    if body["rows"]:
+        # Row carries Phase 28 capacity-coupled fields + Phase 29 response fields.
+        for k in ("delivery_domain", "capacity_model", "deliveries_per_day",
+                  # Phase 28 capacity
+                  "required_drones", "required_operators",
+                  "required_chargers", "daily_capacity_overhead",
+                  "capacity_overhead_per_delivery",
+                  # Source economics
+                  "avg_operational_cost", "avg_revenue", "avg_source_profit",
+                  # Phase 29 response
+                  "saturation_volume_per_day",
+                  "domain_efficiency_credit", "domain_value_decay",
+                  "net_domain_response",
+                  "adjusted_avg_operational_cost", "adjusted_avg_revenue",
+                  # Composite
+                  "avg_effective_profit", "break_even_rate", "trip_count"):
+            assert k in body["rows"][0], f"missing row key: {k}"
+
+
+def test_volume_sensitivity_endpoint_honors_capacity_model_param(workbench):
+    pilot = workbench["client"].get(
+        "/analytics/volume-sensitivity?capacity_model=pilot_capacity"
+    ).json()
+    urban = workbench["client"].get(
+        "/analytics/volume-sensitivity?capacity_model=dense_urban_capacity"
+    ).json()
+    assert pilot["capacity_model"] == "pilot_capacity"
+    assert urban["capacity_model"] == "dense_urban_capacity"
+    # Required drones at d=1000 must differ — productivity rates do.
+    if pilot["rows"] and urban["rows"]:
+        p1k = next(r for r in pilot["rows"] if r["deliveries_per_day"] == 1000)
+        u1k = next(r for r in urban["rows"] if r["deliveries_per_day"] == 1000)
+        assert p1k["required_drones"] > u1k["required_drones"]
+
+
+def test_viability_summary_endpoint_shape(workbench):
+    r = workbench["client"].get("/analytics/viability-summary")
+    assert r.status_code == 200
+    body = r.json()
+    for k in ("cells", "capacity_models", "delivery_domains"):
+        assert k in body
+    assert body["capacity_models"], "capacity_models list is empty"
+    if body["cells"]:
+        cell = body["cells"][0]
+        for k in ("capacity_model", "delivery_domain", "addressable_ceiling",
+                  "breakeven_deliveries_per_day",
+                  "viable_within_addressable_demand", "state"):
+            assert k in cell, f"missing cell key: {k}"
+        assert cell["state"] in ("viable", "beyond", "never")
+
+
 def test_missing_db_returns_404(tmp_path: Path):
     """Wipe DRONE_API_DB to a non-existent path and confirm 404."""
     old = os.environ.get("DRONE_API_DB")

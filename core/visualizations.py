@@ -68,6 +68,23 @@ CHART_FILENAMES = {
     # scale_model name; not a "fleet size curve" because four datapoints
     # don't make a curve, they make a line through dots.
     "cost_per_delivery_by_scale":   "cost_per_delivery_by_scale.png",
+    # Phase 27 — fixed-overhead volume sensitivity (LEGACY).  Kept as
+    # the visible "before" view alongside the Phase 28 capacity-coupled
+    # chart so the correction is reviewable side-by-side.
+    "effective_profit_by_delivery_volume": "effective_profit_by_delivery_volume.png",
+    "amortized_overhead_by_delivery_volume": "amortized_overhead_by_delivery_volume.png",
+    # Phase 28 — capacity-coupled volume sensitivity.  Required fleet
+    # capacity is derived from each sweep point; curves are staircase
+    # because required headcounts are integer-valued.
+    "capacity_coupled_profit_by_volume":     "capacity_coupled_profit_by_volume.png",
+    "required_drones_by_delivery_volume":    "required_drones_by_delivery_volume.png",
+    # Phase 29 — synthetic domain volume response.  Decomposes the
+    # response layered on top of Phase 28's capacity-coupled curves.
+    "domain_response_components_by_volume":  "domain_response_components_by_volume.png",
+    # Phase 29 revision — viability grid: 3×4 colour matrix of breakeven
+    # outcomes across (capacity_model × delivery_domain).  This is the
+    # answer card — green/yellow/red verdict per cell.
+    "viability_by_capacity_and_domain":      "viability_by_capacity_and_domain.png",
 }
 
 
@@ -907,6 +924,503 @@ def _chart_cost_per_delivery_by_scale(
     return _save(fig, out_path)
 
 
+def _chart_effective_profit_by_delivery_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """LEGACY (Phase 27): fixed-overhead-amortization curve.
+
+    Kept as the visible "before" view alongside the Phase 28 capacity-
+    coupled chart.  Reads the predecessor formula from
+    ``legacy_fixed_overhead_sensitivity`` so the artifact still renders.
+    """
+    from core.volume_sensitivity import (
+        legacy_fixed_overhead_sensitivity, legacy_sensitivity_metadata,
+    )
+
+    db_path = _db_path_from_conn(conn)
+    rows = legacy_fixed_overhead_sensitivity(db_path) if db_path else []
+    md   = legacy_sensitivity_metadata("pilot_program")
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    if not rows:
+        ax.text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    by_domain: dict[str, list[tuple[int, float]]] = {}
+    for r in rows:
+        by_domain.setdefault(r["delivery_domain"], []).append(
+            (r["deliveries_per_day"], r["avg_effective_profit"])
+        )
+
+    for domain in sorted(by_domain.keys()):
+        series = sorted(by_domain[domain])
+        xs = [p for p, _ in series]
+        ys = [v for _, v in series]
+        ax.plot(xs, ys, marker="o", label=domain, linewidth=1.4, markersize=4)
+
+    ax.axhline(0, color="black", linewidth=0.6)
+    ax.set_xscale("log")
+    ax.set_xlabel("deliveries per day (log scale)")
+    ax.set_ylabel("avg effective profit per trip (USD, synthetic)")
+    ax.set_title(
+        f"[Phase 27 legacy] Effective profit by delivery volume\n"
+        f"cost structure: {md['scale_model_name']} "
+        f"(${md['daily_overhead_usd']:,.0f}/day held constant — fixed-overhead amortization)"
+    )
+    ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    return _save(fig, out_path)
+
+
+def _chart_amortized_overhead_by_delivery_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """LEGACY (Phase 27): smooth 1/x overhead decay.
+
+    Reads from ``legacy_fixed_overhead_sensitivity`` so the artifact still
+    renders alongside the Phase 28 staircase chart.
+    """
+    from core.volume_sensitivity import (
+        legacy_fixed_overhead_sensitivity, legacy_sensitivity_metadata,
+    )
+
+    db_path = _db_path_from_conn(conn)
+    rows = legacy_fixed_overhead_sensitivity(db_path) if db_path else []
+    md   = legacy_sensitivity_metadata("pilot_program")
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    if not rows:
+        ax.text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    seen: dict[int, float] = {}
+    for r in rows:
+        seen[r["deliveries_per_day"]] = r["avg_amortized_overhead"]
+    xs = sorted(seen.keys())
+    ys = [seen[x] for x in xs]
+
+    ax.plot(xs, ys, marker="o", color="goldenrod", linewidth=1.4, markersize=4)
+    ax.set_xscale("log")
+    ax.set_xlabel("deliveries per day (log scale)")
+    ax.set_ylabel("amortized overhead per trip (USD, synthetic)")
+    ax.set_title(
+        f"[Phase 27 legacy] Amortized overhead by delivery volume\n"
+        f"cost structure: {md['scale_model_name']} "
+        f"(${md['daily_overhead_usd']:,.0f}/day held constant — fixed-overhead amortization)"
+    )
+    ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+    fig.tight_layout()
+    return _save(fig, out_path)
+
+
+# ── Phase 28: capacity-coupled volume charts ────────────────────────────────
+
+def _split_within_beyond(series: list[tuple]) -> tuple[list, list]:
+    """Split a sorted (d, …, within_addressable_demand) series into
+    a ``within`` and a ``beyond`` segment.  Bridges them by prepending
+    the last within point to the beyond segment so the line connects
+    visually across the saturation transition.
+
+    Each tuple is expected to be ``(d, value, within_bool, …)`` — only
+    the last element of the boolean position must be ``within``.
+    """
+    within = [t for t in series if t[-1]]
+    beyond = [t for t in series if not t[-1]]
+    if within and beyond:
+        beyond = [within[-1]] + beyond
+    return within, beyond
+
+
+def _chart_capacity_coupled_profit_by_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """Capacity-coupled effective-profit curves — small multiples.
+
+    One panel per capacity_model (pilot → regional → dense_urban), four
+    domain curves per panel.  Shared y-axis so cross-capacity differences
+    are visually comparable.  Within-addressable-demand segment renders
+    as a soft staircase; beyond-addressable-demand segment continues as
+    a dashed extension (Phase 29 revision).  Composite reflects capacity
+    overhead (Phase 28) and synthetic domain response (Phase 29)
+    superimposed; for the response components in isolation, see
+    ``domain_response_components_by_volume.png``.
+    """
+    from core.capacity_models   import list_capacity_models
+    from core.volume_sensitivity import volume_sensitivity
+
+    db_path = _db_path_from_conn(conn)
+    natural_cap = ["pilot_capacity", "regional_capacity", "dense_urban_capacity"]
+    capacities  = ([c for c in natural_cap if c in list_capacity_models()] +
+                   [c for c in list_capacity_models() if c not in natural_cap])
+
+    rows_by_cap: dict[str, list[dict]] = {}
+    if db_path:
+        for cm in capacities:
+            rows_by_cap[cm] = volume_sensitivity(db_path, capacity_model=cm)
+    else:
+        rows_by_cap = {cm: [] for cm in capacities}
+
+    has_data = any(rows_by_cap.values())
+    fig, axes = plt.subplots(
+        1, len(capacities),
+        figsize=(13, 4.8), sharex=True, sharey=True, squeeze=False,
+    )
+    axes_flat = list(axes.flat)
+
+    if not has_data:
+        axes_flat[0].text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=axes_flat[0].transAxes)
+        for ax in axes_flat:
+            ax.set_axis_off()
+        return _save(fig, out_path)
+
+    # Pull the colour cycle once so each domain keeps its colour across
+    # all three panels.
+    colour_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+    # Stable domain → colour mapping (sorted so it's deterministic).
+    all_domains = sorted({
+        r["delivery_domain"]
+        for rows in rows_by_cap.values() for r in rows
+    })
+    domain_colour = {
+        d: colour_cycle[i % len(colour_cycle)]
+        for i, d in enumerate(all_domains)
+    }
+
+    for ax, cm in zip(axes_flat, capacities):
+        rows = rows_by_cap.get(cm, [])
+        if not rows:
+            ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                    transform=ax.transAxes, color="gray", fontsize=9)
+            ax.set_title(cm, fontsize=10)
+            continue
+
+        by_domain: dict[str, list[tuple[int, float, bool]]] = {}
+        for r in rows:
+            by_domain.setdefault(r["delivery_domain"], []).append((
+                r["deliveries_per_day"],
+                r["avg_effective_profit"],
+                r["within_addressable_demand"],
+            ))
+
+        for domain in sorted(by_domain.keys()):
+            colour = domain_colour[domain]
+            series = sorted(by_domain[domain])
+            within, beyond = _split_within_beyond(series)
+            if within:
+                xs = [t[0] for t in within]
+                ys = [t[1] for t in within]
+                ax.plot(xs, ys, marker="o", label=domain, color=colour,
+                        linewidth=1.1, alpha=0.55, markersize=5,
+                        markeredgewidth=1.2, drawstyle="steps-post")
+            if beyond:
+                xs = [t[0] for t in beyond]
+                ys = [t[1] for t in beyond]
+                ax.plot(xs, ys, marker="o", color=colour,
+                        linewidth=1.0, alpha=0.35, markersize=4,
+                        drawstyle="steps-post", linestyle="--")
+
+        ax.axhline(0, color="black", linewidth=0.6)
+        ax.set_xscale("log")
+        ax.set_title(cm, fontsize=10)
+        ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+
+    # Shared labels / single legend.
+    for ax in axes_flat:
+        ax.set_xlabel("deliveries per day (log)")
+    axes_flat[0].set_ylabel("avg effective profit per trip (USD)")
+    # Build a stable legend across all panels.
+    handles = [
+        plt.Line2D([], [], color=domain_colour[d], marker="o",
+                   linewidth=1.4, label=d)
+        for d in all_domains
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=len(all_domains),
+               fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle(
+        "Capacity-coupled effective profit by volume — small multiples\n"
+        "solid = within addressable demand   ·   dashed = extrapolation",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0.06, 1, 0.94))
+    return _save(fig, out_path)
+
+
+def _chart_domain_response_components_by_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """Decompose the Phase 29 domain volume response into its parts.
+
+    Small multiples — one panel per delivery domain — each showing three
+    curves on the same axes:
+
+      * efficiency credit  (cost-side gain, ≥ 0, saturating)
+      * value decay        (revenue-side loss, ≥ 0, saturating)
+      * net response       (credit − decay; can be positive or negative)
+
+    Both axes are linear; x is log-scaled because the sweep spans
+    25 → 6000 deliveries/day.  Lets a reviewer see which lever
+    (efficiency vs decay) dominates each domain's response and where the
+    net response sits relative to zero.
+    """
+    from core.volume_sensitivity import volume_sensitivity
+
+    db_path = _db_path_from_conn(conn)
+    rows = volume_sensitivity(db_path) if db_path else []
+
+    if not rows:
+        fig, ax = plt.subplots(figsize=(9, 4.5))
+        ax.text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    # Bucket rows by domain → list of (d, credit, -decay, net, within).
+    # We negate decay at ingest so each panel renders with a consistent
+    # sign convention (credit positive, decay negative, net signed).
+    by_domain: dict[str, list[tuple[int, float, float, float, bool]]] = {}
+    for r in rows:
+        by_domain.setdefault(r["delivery_domain"], []).append((
+            r["deliveries_per_day"],
+            r["domain_efficiency_credit"],
+            -r["domain_value_decay"],
+            r["net_domain_response"],
+            r["within_addressable_demand"],
+        ))
+
+    domains = sorted(by_domain.keys())
+    # 2×2 grid suits up to 4 domains; fall back to a single row for fewer.
+    n = len(domains)
+    if n <= 2:
+        ncols = n
+        nrows = 1
+    else:
+        ncols = 2
+        nrows = (n + 1) // 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(11, 3.0 * nrows),
+                             sharex=True, sharey=True, squeeze=False)
+    axes_flat = axes.flat
+
+    line_specs = [
+        # (column index, label, colour)
+        (1, "efficiency credit (+)", "seagreen"),
+        (2, "value decay (−)",       "indianred"),
+        (3, "net response",          "steelblue"),
+    ]
+
+    for ax, dom_name in zip(axes_flat, domains):
+        series = sorted(by_domain[dom_name])
+
+        for col, label, colour in line_specs:
+            # Build a per-line (d, y, within) view for the splitter.
+            line_series = [(s[0], s[col], s[-1]) for s in series]
+            within, beyond = _split_within_beyond(line_series)
+
+            if within:
+                xs = [t[0] for t in within]
+                ys = [t[1] for t in within]
+                ax.plot(xs, ys, marker="o", linewidth=1.1, alpha=0.65,
+                        markersize=4, markeredgewidth=1.0,
+                        label=label, color=colour)
+            if beyond:
+                xs = [t[0] for t in beyond]
+                ys = [t[1] for t in beyond]
+                ax.plot(xs, ys, marker="o", linewidth=0.9, alpha=0.35,
+                        markersize=3, linestyle="--", color=colour)
+
+        ax.axhline(0, color="black", linewidth=0.5)
+        ax.set_xscale("log")
+        ax.set_title(dom_name, fontsize=11)
+        ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+
+    # Hide unused panels (when n is odd).
+    for ax in list(axes_flat)[n:]:
+        ax.set_visible(False)
+
+    # Shared labels + one legend.
+    for ax in axes[-1, :]:
+        ax.set_xlabel("deliveries per day (log scale)")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("USD / delivery (synthetic)")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center",
+               ncol=3, fontsize=9, frameon=False,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(
+        "Domain volume-response decomposition\n"
+        "(efficiency credit, value decay, and their net — Phase 29; "
+        "dashed = beyond addressable demand)",
+        fontsize=12,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 0.96))
+    return _save(fig, out_path)
+
+
+def _chart_required_drones_by_delivery_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """Required-fleet staircase.  Single line — required_drones is a
+    function of (capacity_model, deliveries_per_day) only and does not
+    vary by domain.
+    """
+    from core.volume_sensitivity import (
+        DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY,
+        sensitivity_metadata, volume_sensitivity,
+    )
+
+    db_path = _db_path_from_conn(conn)
+    rows = volume_sensitivity(db_path) if db_path else []
+    md   = sensitivity_metadata(DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY)
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    if not rows:
+        ax.text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    seen: dict[int, int] = {}
+    for r in rows:
+        seen[r["deliveries_per_day"]] = r["required_drones"]
+    xs = sorted(seen.keys())
+    ys = [seen[x] for x in xs]
+
+    ax.plot(xs, ys, marker="o", color="steelblue",
+            linewidth=1.4, markersize=4, drawstyle="steps-post")
+    ax.set_xscale("log")
+    ax.set_xlabel("deliveries per day (log scale)")
+    ax.set_ylabel("required drones")
+    ax.set_title(
+        f"Required drones by delivery volume\n"
+        f"capacity model: {md['capacity_model_name']} "
+        f"({md['deliveries_per_drone_per_day']:.0f} deliveries/drone/day)"
+    )
+    ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+    fig.tight_layout()
+    return _save(fig, out_path)
+
+
+def _chart_viability_by_capacity_and_domain(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """3 × 4 viability grid — the portfolio-grade answer card.
+
+    Each cell colours one (capacity_model, delivery_domain) outcome:
+
+    * green   = breakeven volume sits within the domain's addressable demand
+    * yellow  = breakeven volume exists but only past the ceiling
+    * red     = no sweep point clears zero
+
+    Each cell labels the breakeven volume (or "never") plus the
+    addressable ceiling so a reviewer reads "what" and "where the model
+    runs out" in one glance.  This chart deliberately answers the
+    question that ``capacity_coupled_profit_by_volume.png`` only
+    illustrates.
+    """
+    from core.capacity_models   import list_capacity_models
+    from core.delivery_domains  import list_domains
+    from core.volume_sensitivity import compute_viability_summary, viability_state
+    import matplotlib.patches as mpatches
+
+    db_path = _db_path_from_conn(conn)
+    cells = compute_viability_summary(db_path) if db_path else []
+
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+
+    if not cells:
+        ax.text(0.5, 0.5,
+                "no economics snapshots yet —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    # Canonical orderings: pilot → regional → dense_urban (escalating
+    # cost structure), domains sorted alphabetically for stability.
+    natural_cap = ["pilot_capacity", "regional_capacity", "dense_urban_capacity"]
+    capacities = ([c for c in natural_cap if c in list_capacity_models()] +
+                  [c for c in list_capacity_models() if c not in natural_cap])
+    domains = list_domains()
+    by_cell = {(c["capacity_model"], c["delivery_domain"]): c for c in cells}
+
+    STATE_COLOUR = {
+        "viable": "#c8e6c9",   # soft green
+        "beyond": "#fff59d",   # soft yellow
+        "never":  "#ffcdd2",   # soft red
+    }
+
+    nrows = len(capacities)
+    ncols = len(domains)
+    for ci, cap in enumerate(capacities):
+        for di, dom in enumerate(domains):
+            r = by_cell.get((cap, dom))
+            # Cells run top-to-bottom in chart order so row 0 = first
+            # capacity (pilot) at the top.
+            y = nrows - 1 - ci
+            if r is None:
+                colour = "#eeeeee"
+                label  = "—"
+            else:
+                colour = STATE_COLOUR[viability_state(r)]
+                be     = r["breakeven_deliveries_per_day"]
+                ceil_  = r["addressable_ceiling"]
+                if be is None:
+                    label = f"never\n(ceiling {ceil_}/day)"
+                elif be <= ceil_:
+                    label = f"≥ {be}/day\n(ceiling {ceil_}/day)"
+                else:
+                    label = f"breakeven {be}/day\n(beyond ceiling {ceil_}/day)"
+            ax.add_patch(plt.Rectangle(
+                (di, y), 1, 1, facecolor=colour, edgecolor="gray", linewidth=0.8,
+            ))
+            ax.text(di + 0.5, y + 0.5, label,
+                    ha="center", va="center", fontsize=9)
+
+    ax.set_xlim(0, ncols)
+    ax.set_ylim(0, nrows)
+    ax.set_xticks([d + 0.5 for d in range(ncols)])
+    ax.set_xticklabels(domains, rotation=0, fontsize=9)
+    ax.set_yticks([nrows - 1 - c + 0.5 for c in range(nrows)])
+    ax.set_yticklabels(capacities, fontsize=9)
+    ax.tick_params(length=0)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_aspect("auto")
+
+    # Legend.
+    handles = [
+        mpatches.Patch(color=STATE_COLOUR["viable"], label="viable within addressable demand"),
+        mpatches.Patch(color=STATE_COLOUR["beyond"], label="breakeven beyond addressable demand"),
+        mpatches.Patch(color=STATE_COLOUR["never"],  label="no breakeven in sweep"),
+    ]
+    ax.legend(handles=handles, loc="upper center",
+              bbox_to_anchor=(0.5, -0.08), ncol=3, frameon=False, fontsize=9)
+
+    ax.set_title(
+        "Viability by (capacity model × delivery domain)\n"
+        "Synthetic comparative model — does the formula find breakeven, "
+        "and is it within addressable demand?",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    return _save(fig, out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -942,6 +1456,12 @@ def generate_charts(
         "hybrid_activation_breakdown":   _chart_hybrid_activation_breakdown,
         "delivery_latency_by_mode":      _chart_delivery_latency_by_mode,
         "queue_pressure_vs_drone_activation": _chart_queue_pressure_vs_drone_activation,
+        "effective_profit_by_delivery_volume":   _chart_effective_profit_by_delivery_volume,
+        "amortized_overhead_by_delivery_volume": _chart_amortized_overhead_by_delivery_volume,
+        "capacity_coupled_profit_by_volume":     _chart_capacity_coupled_profit_by_volume,
+        "required_drones_by_delivery_volume":    _chart_required_drones_by_delivery_volume,
+        "domain_response_components_by_volume":  _chart_domain_response_components_by_volume,
+        "viability_by_capacity_and_domain":      _chart_viability_by_capacity_and_domain,
     }
 
     results: dict[str, str] = {}

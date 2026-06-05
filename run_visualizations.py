@@ -34,9 +34,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     paths = generate_charts(db_path=args.db, out_dir=args.out)
-    print(f"Wrote {len(paths)} charts to {args.out}:")
+    # Print the ABSOLUTE path of the output directory so there is no
+    # ambiguity about where the files landed.  Past failure mode: the
+    # relative path "outputs/charts" looks identical when it resolves to
+    # ``C:\Users\you\Documents\...`` (local) vs ``...\OneDrive\Documents\...``
+    # (synced) — the terminal sees one, Explorer's "Documents" shortcut
+    # often points at the other.  Showing the absolute path makes the
+    # mismatch impossible to miss.
+    out_abs = os.path.abspath(args.out)
+    print(f"Wrote {len(paths)} charts to:")
+    print(f"  {out_abs}")
+    print()
     for name, path in paths.items():
-        print(f"  {name:<22} {path}")
+        print(f"  {name:<40} {os.path.basename(path)}")
     return 0
 
 

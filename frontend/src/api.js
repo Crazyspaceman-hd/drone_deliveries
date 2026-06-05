@@ -31,6 +31,10 @@ export const api = {
   deliveryDomains:    () => get('/analytics/delivery-domains'),
   scaleModels:        () => get('/analytics/scale-models'),
   domainScaleMatrix:  () => get('/analytics/domain-scale-matrix'),
+  volumeSensitivity:  (capacityModel) =>
+    get(`/analytics/volume-sensitivity${capacityModel
+      ? `?capacity_model=${encodeURIComponent(capacityModel)}` : ''}`),
+  viabilitySummary:   () => get('/analytics/viability-summary'),
   experiments:        () => get('/experiments'),
   experiment:         (id) => get(`/experiments/${encodeURIComponent(id)}`),
 };

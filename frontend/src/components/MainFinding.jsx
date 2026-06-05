@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from './useApi.js';
+import { ViabilityGrid } from './ViabilityGrid.jsx';
 
 /**
  * Decision summary.  Each finding card is rule-based, derived from one
@@ -11,27 +12,36 @@ import { useApi } from './useApi.js';
 export function MainFinding() {
   const disp     = useApi(() => api.displacement());
   const latency  = useApi(api.latency);
-  const domains  = useApi(api.deliveryDomains);
-  const scales   = useApi(api.scaleModels);
   const matrix   = useApi(api.domainScaleMatrix);
   const validate = useApi(api.validation);
+  // domains/scales were consumed by the deprecated DomainCard /
+  // ScaleCard rendered above; the ViabilityGrid subsumes both and
+  // makes the network requests unnecessary on this page.  The
+  // components themselves still exist in this file for reuse.
 
   return (
     <div>
       <p className="muted section-lead">
-        Six structured queries against the snapshot tables.  Each is one
-        deterministic claim — no aggregate hides the cell-by-cell story
-        of how the answer shifts under different domain and scale
-        assumptions.  For the full breakdown see{' '}
-        <Link to="/domain-scale">Domain &amp; Scale</Link>.
+        The viability grid below is the primary signal.  For every
+        <span className="mono"> (capacity_model × delivery_domain) </span>
+        cell, it asks whether the model finds break-even and whether
+        that break-even sits inside the domain's addressable demand.
+        The supporting cards underneath surface the numbers behind one
+        slice of the story — operational cost vs trucks, hybrid latency,
+        and validation status.
       </p>
 
+      <ViabilityGrid showTitle={false} />
+
+      <p className="muted">
+        For the full grid + line-chart small multiples + per-volume
+        breakdown, see <Link to="/domain-scale">Domain &amp; Scale</Link>.
+      </p>
+
+      <h2 className="section-title">Supporting cards</h2>
       <div className="finding-grid">
         <OperationalVsTrucksCard disp={disp} matrix={matrix} />
         <HybridLatencyCard call={latency} />
-        <DomainCard call={domains} />
-        <ScaleCard call={scales} />
-        <BestCombinationCard call={matrix} />
         <ValidationCard call={validate} />
       </div>
 

@@ -1,5 +1,7 @@
 """GET /analytics/delivery-displacement — the headline business endpoint."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 
 from api.dependencies import require_db
@@ -323,6 +325,109 @@ def domain_scale_matrix_endpoint(db: str = Depends(require_db)) -> dict:
         "cells":        cells,
         "best_cell":    best,
         "worst_cell":   worst,
+    }
+
+
+# ── Phase 27: volume sensitivity ────────────────────────────────────────────
+
+@router.get("/volume-sensitivity")
+def volume_sensitivity_endpoint(
+    capacity_model:         str           = "pilot_capacity",
+    source_snapshot_run_id: Optional[str] = None,
+    domains:                Optional[str] = None,
+    db: str = Depends(require_db),
+) -> dict:
+    """Capacity-coupled volume sweep (Phase 28).
+
+    Given a :class:`CapacityModel` template, derive required fleet
+    capacity from each sweep point's ``deliveries_per_day`` and return
+    the resulting per-domain effective-profit curve.  Read-only — the
+    underlying ``core.volume_sensitivity`` module does not write to any
+    table.
+
+    **Breaking change from Phase 27**: the ``scale_model=`` query param
+    is removed.  The endpoint now accepts ``capacity_model=`` only.  The
+    Phase 27 fixed-overhead sensitivity remains available in-process
+    as ``core.volume_sensitivity.legacy_fixed_overhead_sensitivity``
+    for chart-artifact compatibility, but is not routed.
+
+    Query params:
+        capacity_model:         capacity / cost-structure template
+                                (default ``pilot_capacity``).
+        source_snapshot_run_id: pin to one economics transform_run_id.
+                                Omit for "most recent per (trip, domain)".
+        domains:                comma-separated allow-list of delivery
+                                domains; omit for "all domains found".
+    """
+    from core.volume_sensitivity import (
+        sensitivity_metadata, volume_sensitivity,
+    )
+
+    domain_list = (
+        [d.strip() for d in domains.split(",") if d.strip()]
+        if domains else None
+    )
+    rows = volume_sensitivity(
+        db,
+        source_snapshot_run_id = source_snapshot_run_id,
+        capacity_model         = capacity_model,
+        delivery_domains       = domain_list,
+    )
+    md = sensitivity_metadata(capacity_model)
+
+    best  = max(rows, key=lambda r: r["avg_effective_profit"]) if rows else None
+    worst = min(rows, key=lambda r: r["avg_effective_profit"]) if rows else None
+    domains_seen = sorted({r["delivery_domain"] for r in rows})
+
+    return {
+        "rows":                  rows,
+        "capacity_model":        md["capacity_model_name"],
+        "capacity_assumptions":  {
+            k: v for k, v in md.items()
+            if k not in ("capacity_model_name", "sweep_points", "registry_version")
+        },
+        "sweep_points":          md["sweep_points"],
+        "registry_version":      md["registry_version"],
+        "domains":               domains_seen,
+        "best_row":              best,
+        "worst_row":             worst,
+    }
+
+
+# ── Phase 29 rev: viability cross-tabulation ────────────────────────────────
+
+@router.get("/viability-summary")
+def viability_summary_endpoint(
+    domains: Optional[str] = None,
+    db: str = Depends(require_db),
+) -> dict:
+    """3×4 viability grid: every (capacity_model × delivery_domain) cell
+    summarised as viable / beyond addressable demand / never.
+
+    Read-only — aggregates what ``/analytics/volume-sensitivity`` would
+    already return per capacity model.
+
+    Query params:
+        domains:  comma-separated allow-list; omit for all.
+    """
+    from core.capacity_models   import list_capacity_models
+    from core.delivery_domains  import list_domains
+    from core.volume_sensitivity import compute_viability_summary, viability_state
+
+    domain_list = (
+        [d.strip() for d in domains.split(",") if d.strip()]
+        if domains else None
+    )
+
+    cells = compute_viability_summary(db, delivery_domains=domain_list)
+    # Attach the state label here so the frontend doesn't reimplement it.
+    for c in cells:
+        c["state"] = viability_state(c)
+
+    return {
+        "cells":           cells,
+        "capacity_models": list_capacity_models(),
+        "delivery_domains": list_domains(),
     }
 
 
