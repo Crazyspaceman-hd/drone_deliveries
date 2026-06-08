@@ -7,7 +7,10 @@ import json
 import pytest
 
 from transforms import economics
-from core.portfolio_summary import generate_portfolio_summary
+from core.portfolio_summary import (
+    aggregate_pain_points, diagnose_viability_cells,
+    generate_portfolio_summary,
+)
 
 
 @pytest.fixture
@@ -29,7 +32,8 @@ def test_summary_emits_every_documented_key(populated_db: str):
         "capacity_models_fully_viable", "capacity_models_fully_red",
         "capacity_models_mixed",
         "capacity_models", "delivery_domains",
-        "headline", "validation", "run_counts", "charts_dir",
+        "headline", "pain_points",
+        "validation", "run_counts", "charts_dir",
     }
     s = generate_portfolio_summary(populated_db)
     missing = expected - set(s.keys())
@@ -120,3 +124,98 @@ def test_run_counts_present(populated_db: str):
     assert "simulation_runs" in rc
     assert "experiments"     in rc
     assert rc["simulation_runs"] >= 1   # writable_db seeds one run
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pain-points diagnostics
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_diagnostics_emit_required_keys(populated_db: str):
+    expected = {
+        "capacity_model", "delivery_domain", "state",
+        "dominant_constraint", "addressable_ceiling",
+        "breakeven_deliveries_per_day",
+        "anchor_deliveries_per_day", "anchor_required_drones",
+        "anchor_overhead_per_delivery", "anchor_profit_before_overhead",
+        "anchor_effective_profit", "gap_at_anchor",
+    }
+    diagnostics = diagnose_viability_cells(populated_db)
+    assert diagnostics, "no diagnostics produced"
+    for d in diagnostics:
+        missing = expected - set(d.keys())
+        assert not missing, f"missing keys: {missing}"
+
+
+def test_dominant_constraint_is_one_of_documented_values(populated_db: str):
+    valid = {"viable", "capacity_overhead", "addressable_demand",
+             "mixed", "no_data"}
+    for d in diagnose_viability_cells(populated_db):
+        assert d["dominant_constraint"] in valid, (
+            f"unexpected dominant_constraint: {d['dominant_constraint']}"
+        )
+
+
+def test_viable_cells_have_viable_constraint(populated_db: str):
+    """A `viable` state must carry dominant_constraint='viable' — never
+    a failure attribution.  Otherwise the README will write 'this works
+    BECAUSE capacity overhead is too high', which is nonsense."""
+    for d in diagnose_viability_cells(populated_db):
+        if d["state"] == "viable":
+            assert d["dominant_constraint"] == "viable"
+
+
+def test_never_cells_have_negative_gap_at_anchor(populated_db: str):
+    """A `never` cell means *no* sweep point cleared zero — so at the
+    anchor (largest within-addressable sweep), effective profit must
+    be ≤ 0.  Math sanity check."""
+    for d in diagnose_viability_cells(populated_db):
+        if d["state"] == "never" and d["gap_at_anchor"] is not None:
+            assert d["gap_at_anchor"] <= 0
+
+
+def test_aggregate_observation_kinds_are_well_defined():
+    """Aggregate observation kinds must be drawn from a fixed set so
+    the frontend's plain-English templates don't have to handle
+    surprises."""
+    valid_kinds = {
+        "capacity_uniformly_red",
+        "capacity_uniformly_viable",
+        "capacity_addressable_capped",
+        "capacity_mixed",
+    }
+    # Build synthetic diagnostics covering each pattern.
+    samples = [
+        # uniformly red
+        {"capacity_model": "x", "delivery_domain": "a", "state": "never",
+         "dominant_constraint": "capacity_overhead",
+         "breakeven_deliveries_per_day": None, "gap_at_anchor": -10.0},
+        {"capacity_model": "x", "delivery_domain": "b", "state": "never",
+         "dominant_constraint": "capacity_overhead",
+         "breakeven_deliveries_per_day": None, "gap_at_anchor": -8.0},
+        # uniformly viable
+        {"capacity_model": "y", "delivery_domain": "a", "state": "viable",
+         "dominant_constraint": "viable",
+         "breakeven_deliveries_per_day": 200, "gap_at_anchor": 4.0},
+        {"capacity_model": "y", "delivery_domain": "b", "state": "viable",
+         "dominant_constraint": "viable",
+         "breakeven_deliveries_per_day": 150, "gap_at_anchor": 5.0},
+        # uniformly beyond
+        {"capacity_model": "z", "delivery_domain": "a", "state": "beyond",
+         "dominant_constraint": "addressable_demand",
+         "breakeven_deliveries_per_day": 2000, "gap_at_anchor": -1.0},
+    ]
+    bundle = aggregate_pain_points(samples)
+    kinds = {o["kind"] for o in bundle["observations"]}
+    assert kinds <= valid_kinds, f"unknown kind(s): {kinds - valid_kinds}"
+    assert "capacity_uniformly_red"      in kinds
+    assert "capacity_uniformly_viable"   in kinds
+    assert "capacity_addressable_capped" in kinds
+
+
+def test_constraint_counts_sum_to_cell_total(populated_db: str):
+    bundle = aggregate_pain_points(diagnose_viability_cells(populated_db))
+    n_total = sum(bundle["constraint_counts"].values())
+    n_cells = len(bundle["diagnostics"])
+    assert n_total == n_cells, (
+        f"constraint_counts ({n_total}) != diagnostics ({n_cells})"
+    )

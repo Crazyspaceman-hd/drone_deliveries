@@ -252,7 +252,7 @@ def test_viability_summary_endpoint_shape(workbench):
     r = workbench["client"].get("/analytics/viability-summary")
     assert r.status_code == 200
     body = r.json()
-    for k in ("cells", "capacity_models", "delivery_domains"):
+    for k in ("cells", "capacity_models", "delivery_domains", "pain_points"):
         assert k in body
     assert body["capacity_models"], "capacity_models list is empty"
     if body["cells"]:
@@ -262,6 +262,16 @@ def test_viability_summary_endpoint_shape(workbench):
                   "viable_within_addressable_demand", "state"):
             assert k in cell, f"missing cell key: {k}"
         assert cell["state"] in ("viable", "beyond", "never")
+    # Pain-points block shape
+    pp = body["pain_points"]
+    for k in ("diagnostics", "constraint_counts", "observations"):
+        assert k in pp
+    if pp["diagnostics"]:
+        d = pp["diagnostics"][0]
+        for k in ("capacity_model", "delivery_domain", "state",
+                  "dominant_constraint", "anchor_overhead_per_delivery",
+                  "anchor_profit_before_overhead", "gap_at_anchor"):
+            assert k in d
 
 
 def test_missing_db_returns_404(tmp_path: Path):

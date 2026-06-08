@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from './useApi.js';
 import { ViabilityGrid } from './ViabilityGrid.jsx';
+import { FailureModes } from './FailureModes.jsx';
 
 /**
  * Guided landing page.  Conclusion-first.
@@ -43,6 +44,8 @@ export function Overview() {
       </section>
 
       <ViabilityGrid />
+
+      <FailureModes />
 
       <section className="panel">
         <h2 className="section-title">How to read it</h2>

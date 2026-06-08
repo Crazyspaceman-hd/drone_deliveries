@@ -48,6 +48,30 @@ Current findings (from the live database at the time of this writing):
 The aggregated dictionary that backs these claims is embedded at the
 bottom of this document.
 
+## Why some cells don't work
+
+The grid says *which* cells fail. The same aggregator surfaces *why*
+under `portfolio_summary.pain_points`. Diagnostics are anchored at the
+largest sweep point within each domain's addressable demand — the
+deepest the model is allowed to look at the cell honestly.
+
+| capacity × domain | anchor d / day | drones | overhead $/del. | profit-pre-overhead $/del. | gap $/del. |
+|---|---:|---:|---:|---:|---:|
+| pilot × food_delivery     | 4000 | 500 | 24.98 | 11.24 | −13.74 |
+| pilot × medical_delivery  |  650 |  82 | 25.98 | 16.45 |  −9.53 |
+| pilot × retail_package    | 2500 | 313 | 25.17 | 11.89 | −13.28 |
+| pilot × urgent_documents  |  400 |  50 | 25.88 | 13.89 | −11.98 |
+
+The pattern: pilot's overhead floor sits at ≈ $25 / delivery
+regardless of which domain it serves, and no domain has source value
+above that floor. The lever that fixes pilot isn't demand-side
+(different domain, more volume) — it's productivity:
+`deliveries_per_drone_per_day`. At 8 deliveries / drone / day, you
+need too many drones per unit of revenue. Across all 12 cells the
+constraint mix is 8 viable, 4 capacity-overhead-dominated, 0
+addressable-demand-capped — every current failure is a cost problem,
+not a demand problem.
+
 ## Technical architecture
 
 ```

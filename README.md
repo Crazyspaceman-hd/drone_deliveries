@@ -52,6 +52,50 @@ The aggregated dictionary that backs these bullets is embedded as a
 - **Red** — no sweep point clears zero. Capacity overhead dominates
   for the entire addressable range.
 
+## Why some cells don't work
+
+The grid says *which* cells fail. The pain-points block in
+`portfolio_summary.pain_points` says *why*. For every non-viable cell
+the diagnostic is anchored at the largest sweep point that's still
+within the domain's addressable demand — the deepest the model is
+allowed to look at the cell honestly. Anything past that is
+extrapolation, not analysis.
+
+**Aggregate observations from the current local DB:**
+
+- `pilot_capacity` is uniformly red — every domain hits a
+  capacity-overhead floor that exceeds source profit at maximum
+  addressable demand. The worst gap is ≈ −$13.74 / delivery
+  (`pilot × food_delivery` at d=4000, where 500 drones produce
+  $24.98 / delivery overhead vs $11.24 / delivery in source value).
+- `regional_capacity` achieves break-even for every domain within
+  addressable demand; lowest at 150 deliveries / day.
+- `dense_urban_capacity` achieves break-even for every domain within
+  addressable demand; lowest at 250 deliveries / day.
+- Constraint mix across all 12 cells: 8 viable, 4 capacity-overhead-
+  dominated, 0 addressable-demand-capped. There are no "yellow"
+  failure modes in the current registry — every failure is a cost
+  problem, not a demand problem.
+
+**Per-cell numbers for the four failing cells (pilot × every domain):**
+
+| capacity × domain | anchor d / day | required drones | overhead $/delivery | profit-before-overhead $/delivery | gap $/delivery |
+|---|---:|---:|---:|---:|---:|
+| pilot × food_delivery     | 4000 | 500 | 24.98 | 11.24 | −13.74 |
+| pilot × medical_delivery  |  650 |  82 | 25.98 | 16.45 |  −9.53 |
+| pilot × retail_package    | 2500 | 313 | 25.17 | 11.89 | −13.28 |
+| pilot × urgent_documents  |  400 |  50 | 25.88 | 13.89 | −11.98 |
+
+The pattern is consistent across domains: pilot's `daily_overhead /
+deliveries_per_day` floor sits at ≈ $25 / delivery regardless of which
+domain it serves, and no synthetic-domain has source value above that
+floor. The lever that fixes pilot isn't demand-side (different domain,
+more volume) — it's `deliveries_per_drone_per_day`. At 8 deliveries /
+drone / day, you simply need too many drones per unit of revenue.
+
+The workbench renders this same diagnostic live under the **Why some
+cells don't work** section on both the Overview and Main Finding pages.
+
 ## What this demonstrates
 
 Skills the project exercises, in roughly the order a reviewer would
@@ -154,6 +198,27 @@ The raw aggregator output against the current `data/delivery_system.sqlite`:
        "breakeven_deliveries_per_day": 150, "addressable_ceiling": 600}
     ],
     "tightest_addressable_ceiling": {"domain": "urgent_documents", "ceiling": 600}
+  },
+  "pain_points": {
+    "constraint_counts":         {"viable": 8, "capacity_overhead": 4},
+    "observations": [
+      {"kind": "capacity_uniformly_viable",
+       "capacity_model": "dense_urban_capacity",
+       "headline": "dense_urban_capacity achieves break-even for every domain within addressable demand; lowest at 250 deliveries/day."},
+      {"kind": "capacity_uniformly_red",
+       "capacity_model": "pilot_capacity",
+       "headline": "pilot_capacity is uniformly red — every domain hits a capacity-overhead floor that exceeds source profit at maximum addressable demand.",
+       "worst_gap_per_delivery": -13.74},
+      {"kind": "capacity_uniformly_viable",
+       "capacity_model": "regional_capacity",
+       "headline": "regional_capacity achieves break-even for every domain within addressable demand; lowest at 150 deliveries/day."}
+    ],
+    "non_viable_anchors": [
+      {"cell": "pilot × food_delivery",     "anchor_d": 4000, "drones": 500, "overhead": 24.98, "profit_pre_overhead": 11.24, "gap": -13.74},
+      {"cell": "pilot × medical_delivery",  "anchor_d":  650, "drones":  82, "overhead": 25.98, "profit_pre_overhead": 16.45, "gap":  -9.53},
+      {"cell": "pilot × retail_package",    "anchor_d": 2500, "drones": 313, "overhead": 25.17, "profit_pre_overhead": 11.89, "gap": -13.28},
+      {"cell": "pilot × urgent_documents",  "anchor_d":  400, "drones":  50, "overhead": 25.88, "profit_pre_overhead": 13.89, "gap": -11.98}
+    ]
   },
   "run_counts":                  {"simulation_runs": 3, "experiments": 3}
 }

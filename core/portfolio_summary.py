@@ -33,7 +33,9 @@ from typing import Optional
 from core.capacity_models    import list_capacity_models
 from core.delivery_domains   import list_domains
 from core.validation         import generate_validation_summary
-from core.volume_sensitivity import compute_viability_summary, viability_state
+from core.volume_sensitivity import (
+    compute_viability_summary, viability_state, volume_sensitivity,
+)
 
 
 CHARTS_DIR_DEFAULT = "outputs/charts"
@@ -137,6 +139,222 @@ def _headline(cells: list[dict]) -> dict:
     }
 
 
+# ── Pain points: WHY each non-viable cell fails ─────────────────────────────
+#
+# The viability grid says *what* fails.  Diagnostics name *why*.  No new
+# analytics — just a per-cell reading of the existing volume-sensitivity
+# output anchored at the largest sweep point that's still within the
+# domain's addressable demand.  This is the deepest the model is allowed
+# to look at the cell honestly; anything past the ceiling is
+# extrapolation.
+
+def diagnose_viability_cells(
+    db_path: str,
+    *,
+    deliveries_per_day_points: Optional[list[int]] = None,
+) -> list[dict]:
+    """Per-cell failure attribution.
+
+    For every (capacity_model × delivery_domain) cell, anchor the
+    diagnosis at the largest sweep point that's still within the
+    domain's addressable demand.  At that anchor, the row's numbers
+    answer the question *"under the most favorable addressable
+    conditions, why is this cell where it is?"*
+
+    Returns:
+        list of records (sorted by capacity_model, delivery_domain)::
+
+            capacity_model
+            delivery_domain
+            state                          viable / beyond / never
+            dominant_constraint            viable / capacity_overhead /
+                                           addressable_demand / mixed
+            addressable_ceiling
+            breakeven_deliveries_per_day   (or None)
+            anchor_deliveries_per_day      (largest d ≤ ceiling)
+            anchor_required_drones
+            anchor_overhead_per_delivery
+            anchor_profit_before_overhead  (= adj_revenue − adj_op_cost)
+            anchor_effective_profit        (= profit_before_overhead −
+                                            overhead; signed)
+            gap_at_anchor                  alias of anchor_effective_profit
+
+    No writes; pure read-only diagnostic.
+    """
+    cells = compute_viability_summary(
+        db_path, deliveries_per_day_points=deliveries_per_day_points,
+    )
+
+    # Pull volume_sensitivity once per capacity model and slice locally.
+    sensitivity: dict[str, list[dict]] = {}
+    for cap in {c["capacity_model"] for c in cells}:
+        sensitivity[cap] = volume_sensitivity(
+            db_path,
+            capacity_model            = cap,
+            deliveries_per_day_points = deliveries_per_day_points,
+        )
+
+    diagnostics: list[dict] = []
+    for cell in cells:
+        cap = cell["capacity_model"]
+        dom = cell["delivery_domain"]
+        ceiling = int(cell["addressable_ceiling"])
+        state = viability_state(cell)
+
+        within_rows = [
+            r for r in sensitivity[cap]
+            if r["delivery_domain"] == dom and r["within_addressable_demand"]
+        ]
+        if not within_rows:
+            # Sweep doesn't reach this domain at all — shouldn't happen
+            # with the default sweep but defensible.
+            diagnostics.append({
+                "capacity_model":                cap,
+                "delivery_domain":               dom,
+                "state":                          state,
+                "dominant_constraint":            "no_data",
+                "addressable_ceiling":            ceiling,
+                "breakeven_deliveries_per_day":   cell["breakeven_deliveries_per_day"],
+                "anchor_deliveries_per_day":      None,
+                "anchor_required_drones":         None,
+                "anchor_overhead_per_delivery":   None,
+                "anchor_profit_before_overhead":  None,
+                "anchor_effective_profit":        None,
+                "gap_at_anchor":                  None,
+            })
+            continue
+
+        anchor = max(within_rows, key=lambda r: r["deliveries_per_day"])
+        # profit_before_overhead = adjusted_revenue − adjusted_op_cost
+        profit_before_overhead = round(
+            anchor["adjusted_avg_revenue"]
+            - anchor["adjusted_avg_operational_cost"],
+            2,
+        )
+        overhead   = round(anchor["capacity_overhead_per_delivery"], 2)
+        effective  = round(anchor["avg_effective_profit"], 2)
+
+        # Attribute the dominant constraint.
+        if state == "viable":
+            dominant = "viable"
+        elif state == "beyond":
+            # Break-even exists, just past the ceiling.  Demand is the
+            # binding constraint by definition.
+            dominant = "addressable_demand"
+        else:  # never
+            # Even at the best within-addressable point, overhead
+            # exceeds source value.  Capacity overhead is the dominant
+            # binding constraint.
+            if overhead > profit_before_overhead:
+                dominant = "capacity_overhead"
+            else:
+                # Defensive — `never` should imply overhead > profit
+                # somewhere, but if the sweep is sparse we fall back to
+                # `mixed`.
+                dominant = "mixed"
+
+        diagnostics.append({
+            "capacity_model":                cap,
+            "delivery_domain":               dom,
+            "state":                          state,
+            "dominant_constraint":            dominant,
+            "addressable_ceiling":            ceiling,
+            "breakeven_deliveries_per_day":   cell["breakeven_deliveries_per_day"],
+            "anchor_deliveries_per_day":      int(anchor["deliveries_per_day"]),
+            "anchor_required_drones":         int(anchor["required_drones"]),
+            "anchor_overhead_per_delivery":   overhead,
+            "anchor_profit_before_overhead":  profit_before_overhead,
+            "anchor_effective_profit":        effective,
+            "gap_at_anchor":                  effective,
+        })
+
+    diagnostics.sort(key=lambda d: (d["capacity_model"], d["delivery_domain"]))
+    return diagnostics
+
+
+def aggregate_pain_points(diagnostics: list[dict]) -> dict:
+    """Plain-English observations the README + frontend render verbatim.
+
+    No new logic — just groups diagnostics by capacity model and
+    dominant constraint, surfaces aggregate patterns, and returns a
+    bundle that downstream surfaces consume directly.
+    """
+    # Counts by dominant constraint across all cells.
+    constraint_counts: dict[str, int] = {}
+    for d in diagnostics:
+        constraint_counts[d["dominant_constraint"]] = \
+            constraint_counts.get(d["dominant_constraint"], 0) + 1
+
+    # Group by capacity model so we can detect "uniformly red / viable".
+    by_cap: dict[str, list[dict]] = {}
+    for d in diagnostics:
+        by_cap.setdefault(d["capacity_model"], []).append(d)
+
+    observations: list[dict] = []
+    for cap, cells in sorted(by_cap.items()):
+        states = {c["state"] for c in cells}
+        if states == {"never"}:
+            # All red.  Surface the worst (most negative) gap so the
+            # observation carries a concrete number.
+            gaps = [c["gap_at_anchor"] for c in cells
+                    if c.get("gap_at_anchor") is not None]
+            worst = min(gaps) if gaps else None
+            observations.append({
+                "kind":                    "capacity_uniformly_red",
+                "capacity_model":          cap,
+                "headline":                (
+                    f"{cap} is uniformly red — every domain hits a "
+                    f"capacity-overhead floor that exceeds source profit at "
+                    f"maximum addressable demand."
+                ),
+                "worst_gap_per_delivery":  worst,
+                "cells":                   [c["delivery_domain"] for c in cells],
+            })
+        elif states == {"viable"}:
+            # All green.  Surface the lowest breakeven.
+            bes = [c["breakeven_deliveries_per_day"] for c in cells
+                   if c.get("breakeven_deliveries_per_day") is not None]
+            min_be = min(bes) if bes else None
+            observations.append({
+                "kind":                    "capacity_uniformly_viable",
+                "capacity_model":          cap,
+                "headline":                (
+                    f"{cap} achieves break-even for every domain within "
+                    f"addressable demand; lowest at "
+                    f"{min_be} deliveries/day."
+                ),
+                "lowest_breakeven":        min_be,
+                "cells":                   [c["delivery_domain"] for c in cells],
+            })
+        elif "beyond" in states and "viable" not in states:
+            observations.append({
+                "kind":                    "capacity_addressable_capped",
+                "capacity_model":          cap,
+                "headline":                (
+                    f"{cap} can clear break-even on paper for some domains, "
+                    f"but only past the addressable-demand ceiling — the "
+                    f"binding constraint is volume, not cost."
+                ),
+                "cells":                   [c["delivery_domain"] for c in cells],
+            })
+        else:
+            observations.append({
+                "kind":                    "capacity_mixed",
+                "capacity_model":          cap,
+                "headline":                (
+                    f"{cap} is mixed across the four domains — viability "
+                    f"depends on which demand profile you serve."
+                ),
+                "cells":                   [c["delivery_domain"] for c in cells],
+            })
+
+    return {
+        "diagnostics":       diagnostics,
+        "constraint_counts": constraint_counts,
+        "observations":      observations,
+    }
+
+
 def generate_portfolio_summary(db_path: str) -> dict:
     """The one dict the README, Overview page, and recruiter doc all
     consume.  Registry-driven so new capacity / domain entries surface
@@ -169,6 +387,8 @@ def generate_portfolio_summary(db_path: str) -> dict:
 
     breakdown   = _viability_breakdown(cells)
     headline    = _headline(cells)
+    diagnostics = diagnose_viability_cells(db_path)
+    pain_points = aggregate_pain_points(diagnostics)
     validation  = generate_validation_summary(db_path)
     # Strip the per-rule ``results`` list from the embedded validation
     # block — it's a large array that bloats the JSON dump without
@@ -188,6 +408,7 @@ def generate_portfolio_summary(db_path: str) -> dict:
         "capacity_models":                 list_capacity_models(),
         "delivery_domains":                list_domains(),
         "headline":                        headline,
+        "pain_points":                     pain_points,
         "validation":                      validation_compact,
         "run_counts":                      _run_counts(db_path),
         "charts_dir":                      CHARTS_DIR_DEFAULT,

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from './useApi.js';
 import { ViabilityGrid } from './ViabilityGrid.jsx';
+import { FailureModes } from './FailureModes.jsx';
 
 /**
  * Decision summary.  Each finding card is rule-based, derived from one
@@ -32,6 +33,8 @@ export function MainFinding() {
       </p>
 
       <ViabilityGrid showTitle={false} />
+
+      <FailureModes />
 
       <p className="muted">
         For the full grid + line-chart small multiples + per-volume

@@ -412,6 +412,7 @@ def viability_summary_endpoint(
     """
     from core.capacity_models   import list_capacity_models
     from core.delivery_domains  import list_domains
+    from core.portfolio_summary import aggregate_pain_points, diagnose_viability_cells
     from core.volume_sensitivity import compute_viability_summary, viability_state
 
     domain_list = (
@@ -424,10 +425,23 @@ def viability_summary_endpoint(
     for c in cells:
         c["state"] = viability_state(c)
 
+    # Pain-points diagnostics — answers *why* each non-viable cell fails.
+    # Note: diagnose_viability_cells runs across all registered domains
+    # regardless of the `domains` filter so the dominant-constraint
+    # attribution is computed on the full grid; if a domain allow-list
+    # was provided we filter the diagnostics post-hoc.
+    diagnostics = diagnose_viability_cells(db)
+    if domain_list:
+        diagnostics = [
+            d for d in diagnostics if d["delivery_domain"] in domain_list
+        ]
+    pain_points = aggregate_pain_points(diagnostics)
+
     return {
-        "cells":           cells,
-        "capacity_models": list_capacity_models(),
+        "cells":            cells,
+        "capacity_models":  list_capacity_models(),
         "delivery_domains": list_domains(),
+        "pain_points":      pain_points,
     }
 
 
