@@ -15,7 +15,7 @@ question: *does the synthetic model find a delivery volume at which
 this domain breaks even, and does that volume sit inside the domain's
 addressable demand?*
 
-![viability grid](outputs/charts/viability_by_capacity_and_domain.png)
+![viability grid](docs/img/viability_by_capacity_and_domain.png)
 
 Findings extracted from the live grid:
 
