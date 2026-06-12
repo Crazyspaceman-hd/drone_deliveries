@@ -17,6 +17,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from cli_common import add_db_arg, require_db
 from core.calibration import (
     ALIGN_KM, ALIGN_PROB, DIVERGE_KM, DIVERGE_PROB,
     generate_calibration_summary,
@@ -140,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Configured-vs-observed calibration report."
     )
-    parser.add_argument("--db",       default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--markdown", default=None,
                         help="If set, also write the report as markdown.")
     args = parser.parse_args(argv)
@@ -149,8 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     summary = generate_calibration_summary(args.db)

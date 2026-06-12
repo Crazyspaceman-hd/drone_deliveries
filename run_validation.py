@@ -16,6 +16,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from cli_common import add_db_arg, require_db
 from core.validation import (
     ERROR, INFO, WARN, generate_validation_summary,
 )
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Rule-based data-quality validation over the project DB."
     )
-    parser.add_argument("--db",       default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--run-id",   default=None,
                         help="Scope checks to one simulation run.")
     parser.add_argument("--markdown", default=None,
@@ -125,8 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     summary = generate_validation_summary(args.db, run_id=args.run_id)

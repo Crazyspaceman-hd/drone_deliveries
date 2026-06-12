@@ -31,6 +31,7 @@ import argparse
 import os
 import sys
 
+from cli_common import add_db_arg
 from core.scenarios import list_scenarios
 from core.simulator import run_simulation
 
@@ -39,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run multiple operational scenarios into a single SQLite DB."
     )
-    parser.add_argument("--db",        default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--drones",    type=int, default=3)
     parser.add_argument("--trips",     type=int, default=50)
     parser.add_argument("--seed",      type=int, default=42)

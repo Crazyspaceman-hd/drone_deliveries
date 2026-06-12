@@ -13,6 +13,7 @@ import os
 import sqlite3
 import sys
 
+from cli_common import add_db_arg, require_db
 from core.runs import get_run, list_runs
 
 
@@ -105,14 +106,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="List or inspect simulation runs recorded in the local DB."
     )
-    parser.add_argument("--db",     default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--limit",  type=int, default=20)
     parser.add_argument("--run-id", default=None,
                         help="Show full detail for one run by ID.")
     args = parser.parse_args(argv)
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     if args.run_id:

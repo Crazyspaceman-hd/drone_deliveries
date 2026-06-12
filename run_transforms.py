@@ -31,6 +31,7 @@ import argparse
 import os
 import sys
 
+from cli_common import add_db_arg, require_db
 from transforms import economics as economics_module
 from transforms import scale as scale_module
 from transforms.runner import pipeline_names, run_for_all_runs, run_pipeline
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Recompute derived analytical state from raw simulator events."
     )
-    parser.add_argument("--db",        default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--run-id",    default=None,
                         help="Limit transforms to one simulation run.")
     parser.add_argument("--all-runs",  action="store_true",
@@ -79,8 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     # ── overlay sweeps: --all-delivery-domains, --all-scale-models ──────

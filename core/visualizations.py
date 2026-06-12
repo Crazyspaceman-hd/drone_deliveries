@@ -114,6 +114,33 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _style(ax, *, title=None, xlabel=None, ylabel=None, rotate_x=None) -> None:
+    """Apply the common title/axis-label/rotation styling shared by charts."""
+    if title is not None:
+        ax.set_title(title)
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    if rotate_x is not None:
+        ax.tick_params(axis="x", rotation=rotate_x)
+        for tick in ax.get_xticklabels():
+            tick.set_ha("right")
+
+
+def _bar_chart(out_path, labels, values, *, title, xlabel=None, ylabel=None,
+               color="steelblue", figsize=(7, 4), rotate_x=None) -> str:
+    """Render a single-series bar chart end to end (fig → bar → style → save).
+
+    *color* may be one colour or a per-bar list, matching matplotlib's
+    ``ax.bar`` semantics.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(labels, values, color=color)
+    _style(ax, title=title, xlabel=xlabel, ylabel=ylabel, rotate_x=rotate_x)
+    return _save(fig, out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Individual chart builders
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,15 +153,9 @@ def _chart_event_counts(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.bar(labels, counts, color="steelblue")
-    ax.set_title("Drone Delivery Events by Type")
-    ax.set_xlabel("event_type")
-    ax.set_ylabel("count")
-    ax.tick_params(axis="x", rotation=35)
-    for tick in ax.get_xticklabels():
-        tick.set_ha("right")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(9, 5), color="steelblue",
+                      title="Drone Delivery Events by Type",
+                      xlabel="event_type", ylabel="count", rotate_x=35)
 
 
 def _chart_trip_outcomes(conn: sqlite3.Connection, out_path: str) -> str:
@@ -144,14 +165,10 @@ def _chart_trip_outcomes(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(6, 4))
     colors = ["seagreen" if l == "completed" else "indianred" if l == "aborted"
               else "slategray" for l in labels]
-    ax.bar(labels, counts, color=colors)
-    ax.set_title("Trip Outcomes")
-    ax.set_xlabel("status")
-    ax.set_ylabel("count")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(6, 4), color=colors,
+                      title="Trip Outcomes", xlabel="status", ylabel="count")
 
 
 def _chart_drone_utilization(conn: sqlite3.Connection, out_path: str) -> str:
@@ -161,12 +178,9 @@ def _chart_drone_utilization(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.bar(labels, counts, color="darkorange")
-    ax.set_title("Trips Flown by Drone")
-    ax.set_xlabel("drone_id")
-    ax.set_ylabel("trips_flown")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(7, 4), color="darkorange",
+                      title="Trips Flown by Drone",
+                      xlabel="drone_id", ylabel="trips_flown")
 
 
 def _chart_battery_warnings(conn: sqlite3.Connection, out_path: str) -> str:
@@ -182,12 +196,9 @@ def _chart_battery_warnings(conn: sqlite3.Connection, out_path: str) -> str:
     ))
     counts = [warning_counts.get(d, 0) for d in drones]
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.bar(drones, counts, color="crimson")
-    ax.set_title("Battery Warnings by Drone")
-    ax.set_xlabel("drone_id")
-    ax.set_ylabel("battery_warning events")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, drones, counts, figsize=(7, 4), color="crimson",
+                      title="Battery Warnings by Drone",
+                      xlabel="drone_id", ylabel="battery_warning events")
 
 
 def _chart_battery_over_time(conn: sqlite3.Connection, out_path: str) -> str:

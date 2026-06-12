@@ -9,23 +9,11 @@ Usage::
 """
 
 import argparse
-import os
 import sqlite3
 import sys
 from pathlib import Path
 
-
-def _print_table(headers: list[str], rows: list[tuple]) -> None:
-    if not rows:
-        print("  (no rows)")
-        return
-    str_rows = [[("" if v is None else str(v)) for v in r] for r in rows]
-    widths = [max(len(h), *(len(r[i]) for r in str_rows)) for i, h in enumerate(headers)]
-    fmt = "  " + "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format(*headers))
-    print(fmt.format(*("-" * w for w in widths)))
-    for r in str_rows:
-        print(fmt.format(*r))
+from cli_common import add_db_arg, print_table, require_db
 
 
 def run_one(conn: sqlite3.Connection, sql_path: Path) -> None:
@@ -34,17 +22,16 @@ def run_one(conn: sqlite3.Connection, sql_path: Path) -> None:
     cur = conn.execute(sql)
     headers = [d[0] for d in cur.description] if cur.description else []
     rows = cur.fetchall()
-    _print_table(headers, rows)
+    print_table(headers, rows)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run analytics/sql/*.sql against the local SQLite database.")
-    parser.add_argument("--db",      default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--sql-dir", default="analytics/sql")
     args = parser.parse_args(argv)
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     sql_dir = Path(args.sql_dir)
