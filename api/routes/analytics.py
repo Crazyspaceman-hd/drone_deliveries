@@ -1,6 +1,8 @@
 """GET /analytics/delivery-displacement — the headline business endpoint."""
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from api.dependencies import require_db
 from core.displacement import (
@@ -323,6 +325,250 @@ def domain_scale_matrix_endpoint(db: str = Depends(require_db)) -> dict:
         "cells":        cells,
         "best_cell":    best,
         "worst_cell":   worst,
+    }
+
+
+# ── Phase 27: volume sensitivity ────────────────────────────────────────────
+
+@router.get("/volume-sensitivity")
+def volume_sensitivity_endpoint(
+    capacity_model:         str           = "pilot_capacity",
+    source_snapshot_run_id: Optional[str] = None,
+    domains:                Optional[str] = None,
+    db: str = Depends(require_db),
+) -> dict:
+    """Capacity-coupled volume sweep (Phase 28).
+
+    Given a :class:`CapacityModel` template, derive required fleet
+    capacity from each sweep point's ``deliveries_per_day`` and return
+    the resulting per-domain effective-profit curve.  Read-only — the
+    underlying ``core.volume_sensitivity`` module does not write to any
+    table.
+
+    **Breaking change from Phase 27**: the ``scale_model=`` query param
+    is removed.  The endpoint now accepts ``capacity_model=`` only.  The
+    Phase 27 fixed-overhead sensitivity remains available in-process
+    as ``core.volume_sensitivity.legacy_fixed_overhead_sensitivity``
+    for chart-artifact compatibility, but is not routed.
+
+    Query params:
+        capacity_model:         capacity / cost-structure template
+                                (default ``pilot_capacity``).
+        source_snapshot_run_id: pin to one economics transform_run_id.
+                                Omit for "most recent per (trip, domain)".
+        domains:                comma-separated allow-list of delivery
+                                domains; omit for "all domains found".
+    """
+    from core.volume_sensitivity import (
+        sensitivity_metadata, volume_sensitivity,
+    )
+
+    domain_list = (
+        [d.strip() for d in domains.split(",") if d.strip()]
+        if domains else None
+    )
+    rows = volume_sensitivity(
+        db,
+        source_snapshot_run_id = source_snapshot_run_id,
+        capacity_model         = capacity_model,
+        delivery_domains       = domain_list,
+    )
+    md = sensitivity_metadata(capacity_model)
+
+    best  = max(rows, key=lambda r: r["avg_effective_profit"]) if rows else None
+    worst = min(rows, key=lambda r: r["avg_effective_profit"]) if rows else None
+    domains_seen = sorted({r["delivery_domain"] for r in rows})
+
+    return {
+        "rows":                  rows,
+        "capacity_model":        md["capacity_model_name"],
+        "capacity_assumptions":  {
+            k: v for k, v in md.items()
+            if k not in ("capacity_model_name", "sweep_points", "registry_version")
+        },
+        "sweep_points":          md["sweep_points"],
+        "registry_version":      md["registry_version"],
+        "domains":               domains_seen,
+        "best_row":              best,
+        "worst_row":             worst,
+    }
+
+
+# ── Phase 33: multi-domain service mixes ────────────────────────────────────
+
+@router.get("/service-mixes")
+def service_mixes_endpoint(
+    capacity_model: Optional[str] = None,
+    service_mix:    Optional[str] = None,
+    db: str = Depends(require_db),
+) -> dict:
+    """Weighted multi-domain service-mix viability across the volume sweep.
+
+    Read-only analytical overlay (split-volume model — see
+    ``core/service_mix_analysis.py``).  ``service_mix`` is an optional
+    comma-separated allow-list; ``capacity_model`` optionally overrides
+    the default.
+    """
+    from core.service_mix_analysis import compute_service_mix_summary
+    from core.service_mixes        import iter_service_mixes
+    from core.volume_sensitivity   import DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY
+    from core.capacity_models      import list_capacity_models
+
+    mix_filter = (
+        [m.strip() for m in service_mix.split(",") if m.strip()]
+        if service_mix else None
+    )
+    caps = [capacity_model] if capacity_model else None
+    rows = compute_service_mix_summary(
+        db,
+        service_mix_names    = mix_filter,
+        capacity_model_names = caps,
+    )
+    return {
+        "rows":                  rows,
+        "service_mixes":         [m.to_dict() for m in iter_service_mixes()],
+        "capacity_models":       list_capacity_models(),
+        "default_capacity_model": DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY,
+        "chart":                 "service_mix_profit_by_volume.png",
+        "caveats": [
+            "Service mixes are weighted analytical portfolios over existing "
+            "delivery domains — not new simulated event streams.",
+            "Split-volume model: each component is served at total_volume × "
+            "weight, keeping it within its addressable-demand ceiling; "
+            "capacity overhead is shared across the whole mix.",
+            "break_even_rate is a weight-weighted mean of component "
+            "break-even rates — an approximation for a blended portfolio.",
+        ],
+    }
+
+
+# ── Phase 32a: two-parameter capacity explorer ──────────────────────────────
+
+@router.post("/parameter-grid")
+def parameter_grid_endpoint(
+    body: dict = Body(...),
+    db: str = Depends(require_db),
+) -> dict:
+    """Two-parameter viability heatmap for a fixed (base_capacity, domain).
+
+    Read-side and ephemeral — sweeps two CapacityModel parameters across
+    a value grid using multi-override synthetic names, returns the
+    viability margin per cell.  No snapshots written, no experiment
+    recorded.
+
+    Request body::
+
+        {
+            "base_capacity": "pilot_capacity",
+            "domain":        "retail_package",
+            "param_x":       "operator_to_drone_ratio",
+            "values_x":      [0.6, 0.4, 0.2],
+            "param_y":       "deliveries_per_drone_per_day",
+            "values_y":      [8, 16, 24]
+        }
+    """
+    from core.portfolio_summary import compute_parameter_grid
+
+    required = ("base_capacity", "domain", "param_x", "values_x",
+                "param_y", "values_y")
+    if any(not body.get(k) for k in required):
+        raise HTTPException(
+            status_code=422,
+            detail=f"parameter-grid requires non-empty: {', '.join(required)}",
+        )
+    try:
+        return compute_parameter_grid(
+            db,
+            base_capacity = body["base_capacity"],
+            domain        = body["domain"],
+            param_x       = body["param_x"],
+            values_x      = list(body["values_x"]),
+            param_y       = body["param_y"],
+            values_y      = list(body["values_y"]),
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ── Phase 29 rev: viability cross-tabulation ────────────────────────────────
+
+@router.get("/viability-summary")
+def viability_summary_endpoint(
+    domains: Optional[str] = None,
+    db: str = Depends(require_db),
+) -> dict:
+    """3×4 viability grid: every (capacity_model × delivery_domain) cell
+    summarised as viable / beyond addressable demand / never.
+
+    Read-only — aggregates what ``/analytics/volume-sensitivity`` would
+    already return per capacity model.
+
+    Query params:
+        domains:  comma-separated allow-list; omit for all.
+    """
+    from core.capacity_models   import list_capacity_models
+    from core.delivery_domains  import list_domains
+    from core.portfolio_summary import aggregate_pain_points, diagnose_viability_cells
+    from core.volume_sensitivity import compute_viability_summary, viability_state
+
+    domain_list = (
+        [d.strip() for d in domains.split(",") if d.strip()]
+        if domains else None
+    )
+
+    cells = compute_viability_summary(db, delivery_domains=domain_list)
+    # Attach the state label here so the frontend doesn't reimplement it.
+    for c in cells:
+        c["state"] = viability_state(c)
+
+    # Pain-points diagnostics — answers *why* each non-viable cell fails.
+    # Note: diagnose_viability_cells runs across all registered domains
+    # regardless of the `domains` filter so the dominant-constraint
+    # attribution is computed on the full grid; if a domain allow-list
+    # was provided we filter the diagnostics post-hoc.
+    diagnostics = diagnose_viability_cells(db)
+    if domain_list:
+        diagnostics = [
+            d for d in diagnostics if d["delivery_domain"] in domain_list
+        ]
+    pain_points = aggregate_pain_points(diagnostics)
+
+    # Continuous viability margin — pulled from the diagnostics' anchor
+    # gap (dollars per delivery, signed).  Attached per cell so the
+    # frontend ViabilityGrid can colour cells along a diverging scale
+    # rather than the categorical green/yellow/red.
+    margin_by_cell = {
+        (d["capacity_model"], d["delivery_domain"]): d.get("gap_at_anchor")
+        for d in diagnostics
+    }
+    for c in cells:
+        m = margin_by_cell.get((c["capacity_model"], c["delivery_domain"]))
+        c["viability_margin"] = m
+    margins = [m for m in margin_by_cell.values() if m is not None]
+    max_abs = max((abs(m) for m in margins), default=0.0)
+
+    # Phase 31: the domain axis is the union of the registry and what's
+    # actually in the cells — synthetic parameter-sweep variants
+    # (``base@field=value``) live only in snapshot data, never in the
+    # registry, and must still appear as grid columns.
+    domains_axis = sorted(
+        set(list_domains()) | {c["delivery_domain"] for c in cells}
+    )
+    # Phase 32: capacity axis = registry ∪ synthetic capacities present
+    # in the cells (sourced from what-if experiment definitions).
+    # Registered capacities keep their canonical order; synthetics append.
+    registered_caps = list_capacity_models()
+    synthetic_caps = sorted(
+        {c["capacity_model"] for c in cells} - set(registered_caps)
+    )
+    capacity_axis = registered_caps + synthetic_caps
+
+    return {
+        "cells":                      cells,
+        "capacity_models":            capacity_axis,
+        "delivery_domains":           domains_axis,
+        "pain_points":                pain_points,
+        "viability_margin_max_abs":   max_abs,
     }
 
 

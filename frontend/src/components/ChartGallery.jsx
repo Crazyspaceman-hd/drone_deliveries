@@ -4,9 +4,19 @@ import { useApi } from './useApi.js';
 
 /**
  * Chart artifact browser.  Charts are a supporting layer — the primary
- * analytical UX is on the Main Finding and Domain & Scale pages.  Here
- * we just group the PNGs by category and provide short captions.
+ * analytical UX is on the Main Finding and Domain & Scale pages.  The
+ * gallery surfaces a small "Featured" row at the top with the
+ * portfolio-headline charts, then groups everything else by category.
  */
+
+// The three charts that carry the project's primary signal.  Featured
+// rendering takes precedence over the category scheme below — files in
+// FEATURED are pulled out of category buckets so they don't appear twice.
+const FEATURED = [
+  'viability_by_capacity_and_domain.png',
+  'capacity_coupled_profit_by_volume.png',
+  'validation_results.png',
+];
 
 // Category mapping by filename substring.  First match wins.
 const CATEGORIES = [
@@ -18,7 +28,10 @@ const CATEGORIES = [
     match: ['hybrid_activation', 'delivery_latency_by_mode',
             'queue_pressure', 'displacement'] },
   { key: 'domain_scale', label: 'Domain & scale',
-    match: ['revenue_by_delivery_domain', 'scale'] },
+    match: ['revenue_by_delivery_domain', 'scale',
+            'effective_profit_by_delivery_volume',
+            'amortized_overhead_by_delivery_volume',
+            'required_drones', 'domain_response_components'] },
   { key: 'telemetry',   label: 'Telemetry',
     match: ['battery_temperature', 'signal_quality', 'telemetry'] },
   { key: 'validation',  label: 'Validation & calibration',
@@ -29,6 +42,13 @@ const CATEGORIES = [
 
 // One-liner captions for the well-known charts.
 const CAPTIONS = {
+  'viability_by_capacity_and_domain.png':
+    'The answer card: green/yellow/red verdict per (capacity × domain) cell.',
+  'capacity_coupled_profit_by_volume.png':
+    'Small multiples — effective profit by volume per capacity model. ' +
+    'Solid = within addressable demand, dashed = extrapolation.',
+  'validation_results.png':
+    'Rule pass/fail counts by severity.',
   'scenario_operational_profile.png':
     'Trip distance, telemetry density and event mix per scenario.',
   'scenario_profitability.png':
@@ -45,6 +65,14 @@ const CAPTIONS = {
     'Average revenue per trip per delivery domain.',
   'cost_per_delivery_by_scale.png':
     'Effective cost per delivery under each scale model.',
+  'effective_profit_by_delivery_volume.png':
+    '[Phase 27 legacy] Smooth 1/x amortisation — kept as the visible "before".',
+  'amortized_overhead_by_delivery_volume.png':
+    '[Phase 27 legacy] Overhead per delivery under the fixed-overhead formula.',
+  'required_drones_by_delivery_volume.png':
+    'Required fleet staircase — the driver of capacity overhead.',
+  'domain_response_components_by_volume.png':
+    'Phase 29 decomposition: efficiency credit + value decay + net response, per domain.',
   'battery_temperature_by_scenario.png':
     'Distribution of telemetry battery temperatures per scenario.',
   'signal_quality_distribution.png':
@@ -53,8 +81,6 @@ const CAPTIONS = {
     'Observed minus configured event rates per scenario.',
   'scenario_feasibility.png':
     'Composite feasibility score per scenario.',
-  'validation_results.png':
-    'Rule pass/fail counts by severity.',
 };
 
 function categorize(filename) {
@@ -76,18 +102,48 @@ export function ChartGallery() {
       <pre className="mono">python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts</pre>
     </div>
   );
+  // Pull the Featured set out first so it can't double-up in category buckets.
+  const present  = new Set(charts);
+  const featured = FEATURED.filter((name) => present.has(name));
+  const featuredSet = new Set(featured);
+
   const grouped = {};
   for (const name of charts) {
+    if (featuredSet.has(name)) continue;  // already in Featured
     const k = categorize(name);
     (grouped[k] = grouped[k] || []).push(name);
   }
+
+  function Figure({ name }) {
+    return (
+      <figure>
+        <img src={chartUrl(name)} alt={name} loading="lazy" />
+        <figcaption>
+          <div className="mono">{name}</div>
+          {CAPTIONS[name] && <div className="muted">{CAPTIONS[name]}</div>}
+        </figcaption>
+      </figure>
+    );
+  }
+
   return (
     <div>
       <p className="muted section-lead">
         Pre-rendered chart artifacts produced by{' '}
-        <span className="mono">run_visualizations.py</span>.  These support
-        the primary analytical pages — they aren't the analysis itself.
+        <span className="mono">run_visualizations.py</span>.  The Featured
+        row carries the project's primary signal; the categorised
+        sections below are supporting and historical detail.
       </p>
+
+      {featured.length > 0 && (
+        <section>
+          <h2 className="section-title">Featured</h2>
+          <div className="chart-grid">
+            {featured.map((name) => <Figure key={name} name={name} />)}
+          </div>
+        </section>
+      )}
+
       {CATEGORIES.map((c) => {
         const items = grouped[c.key] || [];
         if (!items.length) return null;
@@ -95,17 +151,7 @@ export function ChartGallery() {
           <section key={c.key}>
             <h2 className="section-title">{c.label}</h2>
             <div className="chart-grid">
-              {items.map((name) => (
-                <figure key={name}>
-                  <img src={chartUrl(name)} alt={name} loading="lazy" />
-                  <figcaption>
-                    <div className="mono">{name}</div>
-                    {CAPTIONS[name] && (
-                      <div className="muted">{CAPTIONS[name]}</div>
-                    )}
-                  </figcaption>
-                </figure>
-              ))}
+              {items.map((name) => <Figure key={name} name={name} />)}
             </div>
           </section>
         );

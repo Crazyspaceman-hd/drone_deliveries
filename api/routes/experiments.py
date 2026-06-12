@@ -1,26 +1,112 @@
 """
 api/routes/experiments.py
 
-Read-only experiment lineage endpoints (Phase 24).
+Experiment lineage endpoints (Phase 24) + what-if launcher (Phase 32).
 
-Two endpoints only:
-    GET  /experiments         — list all experiment_runs rows
-    GET  /experiments/{id}    — single row + compute_summary output
+    GET  /experiments           — list all experiment_runs rows
+    GET  /experiments/{id}      — single row + compute_summary output
+    POST /experiments/what-if   — launch a controlled parameter sweep
 
-No POST.  No trigger-via-API.  The experiment layer is a CLI/Python
-concern; the API is a read-only lineage window.
+The what-if launcher is the only write path; it reuses the existing
+``Experiment`` runner so there's a single execution code path.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from api.dependencies import require_db
 from core.experiments import Experiment
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
+
+
+@router.post("/what-if")
+def what_if_endpoint(
+    body: dict = Body(...),
+    db: str = Depends(require_db),
+) -> dict:
+    """Launch a controlled parameter sweep from the workbench.
+
+    Request body::
+
+        {
+            "dimension": "capacity_model",     # or "delivery_domain"
+            "base":      "pilot_capacity",
+            "parameter": "operator_to_drone_ratio",
+            "values":    [0.60, 0.45, 0.30, 0.20],
+            "run_ids":   ["..."]               # optional
+        }
+
+    Reuses the existing ``Experiment`` runner — no second execution
+    path.  ``delivery_domain`` sweeps write economics snapshots with
+    synthetic domain names; ``capacity_model`` sweeps are read-side and
+    record their synthetic names in the experiment definition for
+    discovery by the viability readers (they write no new snapshots).
+
+    Response includes the synthetic names created and a hint to refresh
+    the viability grid.
+    """
+    from datetime import datetime, timezone
+    from core.experiments import ExperimentDefinition, ParameterSweep
+
+    dimension = body.get("dimension")
+    base      = body.get("base")
+    parameter = body.get("parameter")
+    values    = body.get("values")
+    run_ids   = body.get("run_ids") or []
+
+    if not (dimension and base and parameter and isinstance(values, list) and values):
+        raise HTTPException(
+            status_code=422,
+            detail="what-if requires non-empty 'dimension', 'base', "
+                   "'parameter', and a non-empty 'values' list.",
+        )
+
+    try:
+        sweep = ParameterSweep(
+            dimension = dimension,
+            base_name = base,
+            parameter = parameter,
+            values    = list(values),
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Mirror the CLI: capacity base must NOT go into delivery_domains.
+    domains = [base] if dimension == "delivery_domain" else ["retail_package"]
+    defn = ExperimentDefinition(
+        name             = f"_whatif_{ts}",
+        run_ids          = list(run_ids),
+        scenarios        = [],
+        economic_models  = ["suburban_standard"],
+        delivery_domains = domains,
+        scale_models     = ["pilot_program"],
+        parameter_sweeps = [sweep],
+    )
+    result = Experiment(defn, db).run()
+    if result["status"] != "completed":
+        raise HTTPException(
+            status_code=500,
+            detail=f"experiment failed: {result.get('error', 'unknown')}",
+        )
+
+    return {
+        "experiment_name":   defn.name,
+        "experiment_run_id": result["experiment_run_id"],
+        "dimension":         dimension,
+        "synthetic_names":   sweep.synthetic_names(),
+        "run_ids_used":      run_ids,
+        "combinations":      result.get("combinations", 0),
+        "next_step":         (
+            "Refresh the viability grid (GET /analytics/viability-summary) "
+            "— the synthetic variants now appear alongside registered profiles."
+        ),
+    }
 
 
 @router.get("")

@@ -2,6 +2,8 @@ import React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useApi } from './useApi.js';
+import { WhatIfLauncher } from './WhatIfLauncher.jsx';
+import { ParameterGridExplorer } from './ParameterGridExplorer.jsx';
 
 /**
  * Experiment lineage browser (Phase 24 orchestration layer).  Two views:
@@ -11,16 +13,31 @@ import { useApi } from './useApi.js';
 
 export function ExperimentsList() {
   const { data, error, loading } = useApi(api.experiments);
-  if (loading) return <div className="panel muted">Loading experiments…</div>;
-  if (error)   return <div className="panel error">{error}</div>;
   const exps = data?.experiments || [];
-  if (!exps.length) return (
-    <div className="empty-state">
-      No experiments recorded.  Run one with:
-      <pre className="mono">{`python run_experiment.py --list
-python run_experiment.py --name domain_sweep`}</pre>
+  return (
+    <div>
+      {/* Phase 32: the what-if launcher (1-D, feeds the main viability
+          grid) and the two-parameter explorer (2-D, self-contained
+          heatmap) are both always available, even before any experiment
+          exists. */}
+      <WhatIfLauncher />
+      <ParameterGridExplorer />
+
+      {loading && <div className="panel muted">Loading experiments…</div>}
+      {error   && <div className="panel error">{error}</div>}
+      {!loading && !error && !exps.length && (
+        <div className="empty-state">
+          No experiments recorded yet.  Launch one above, or from the CLI:
+          <pre className="mono">{`python run_experiment.py --list
+python run_experiment.py --name pilot_operator_ratio_sensitivity`}</pre>
+        </div>
+      )}
+      {!!exps.length && <ExperimentsTable exps={exps} />}
     </div>
   );
+}
+
+function ExperimentsTable({ exps }) {
   return (
     <div>
       <p className="muted section-lead">
@@ -41,7 +58,11 @@ python run_experiment.py --name domain_sweep`}</pre>
           </thead>
           <tbody>
             {exps.map((e) => (
-              <tr key={e.experiment_run_id}>
+              // Ad-hoc CLI sweeps (--sweep) get muted styling: kept in
+              // the audit trail but visually distinct from named runs.
+              <tr key={e.experiment_run_id}
+                  style={e.experiment_name?.startsWith('_adhoc_')
+                    ? { opacity: 0.55, fontStyle: 'italic' } : undefined}>
                 <td className="mono">
                   <Link to={`/experiments/${e.experiment_run_id}`}>
                     {e.experiment_name}

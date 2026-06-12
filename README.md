@@ -1,48 +1,301 @@
-# Drone Deliveries Event Simulation
+# Drone Deliveries — Last-Mile Economics Pipeline
 
-A small data-engineering portfolio project that simulates drone delivery
-operations as an **event stream**, stores those events in a local SQLite
-database, exports them as JSONL for future lakehouse/object-storage
-ingestion, and ships a handful of SQL queries that answer the kinds of
-questions an analytics or operations team would ask.
+`v1.0-portfolio` · synthetic, comparative, assumption-driven — not a real-world forecast.
 
-The pipeline is intentionally simple end-to-end:
+> **Event-driven analytics pipeline using synthetic drone delivery data to
+> evaluate last-mile delivery economics.** Operational events flow into
+> SQLite, rerunnable transforms layer economic overlays on top, and an
+> analytical workbench surfaces the question the pipeline was built to
+> answer: *under what combination of capacity, scale, and delivery mix
+> does drone delivery actually clear break-even?*
+>
+> **The conclusion, cautiously:** broad drone replacement of traditional
+> delivery looks weak under baseline assumptions. Drone delivery is more
+> plausible as a *targeted augmentation layer* for specific delivery
+> domains, service mixes, and capacity assumptions. The workbench makes
+> those assumptions visible and testable through parameter sweeps, service
+> mixes, and what-if experiments.
 
+## Review this project in 5 minutes
+
+1. **Read the Key findings** below — the whole conclusion in seven bullets.
+2. **Look at the showcase chart** (the viability grid, right under this).
+3. **Open the workbench:** `bash scripts/run_demo.sh` then `python workbench.py`.
+4. **Try the what-if launcher** (Experiments page) — change `operator_to_drone_ratio` and watch the grid recolour.
+5. **Skim the architecture diagram** further down, or [`docs/portfolio_summary.md`](docs/portfolio_summary.md) for the non-technical version.
+
+## Key findings (live, from the current local DB)
+
+The viability grid below cross-tabulates three capacity-cost structures
+against four delivery-domain assumptions. Each cell asks the same
+question: *does the synthetic model find a delivery volume at which
+this domain breaks even, and does that volume sit inside the domain's
+addressable demand?*
+
+![viability grid](docs/img/viability_by_capacity_and_domain.png)
+
+Findings extracted from the live grid:
+
+- **`pilot_capacity` is fundamentally non-viable** — every domain ends
+  the sweep red. Below ~20 deliveries per drone per day, fixed overhead
+  dominates and no volume within addressable demand clears it.
+- **`regional_capacity` and `dense_urban_capacity` both produce break-even
+  for every domain within addressable demand** — 8 viable cells / 0
+  beyond-ceiling / 4 never.
+- **Regional reaches break-even at *lower* volume than dense-urban**
+  (≈150–250 / day vs ≈250–400 / day). Smaller absolute daily overhead
+  amortises faster, even though dense-urban's per-drone productivity is
+  higher.
+- **The tightest addressable ceiling is `urgent_documents` at 600 / day.**
+  Its break-even sits at 150 / day under regional cost — comfortably
+  inside the ceiling.
+- **No yellow cells under the current registry**: whenever the model
+  finds break-even, that break-even sits inside addressable demand.
+  This is the kind of regression a reviewer should watch for if either
+  capacity costs or domain ceilings move.
+
+The aggregated dictionary that backs these bullets is embedded as a
+[live snapshot below](#numbers-shown-above-live-snapshot).
+
+### How to read the grid
+
+- **Green** — model finds break-even at or below the listed delivery
+  volume, and that volume sits inside the domain's addressable demand.
+  The cell label shows the lowest sweep point that crossed zero and
+  the domain's addressable ceiling.
+- **Yellow** — model finds break-even, but only past the addressable
+  ceiling. Useful as a "what would it take?" extrapolation; not a
+  conclusion.
+- **Red** — no sweep point clears zero. Capacity overhead dominates
+  for the entire addressable range.
+
+## Why some cells don't work
+
+The grid says *which* cells fail. The pain-points block in
+`portfolio_summary.pain_points` says *why* — and crucially, *which
+component of overhead is doing the damage*. The `CapacityModel`'s
+overhead is the sum of five fields (platform fixed, drone leases,
+operator wages, maintenance staff, chargers); the diagnostic anchors
+each cell at the largest sweep point within its addressable demand
+and tells you which of the five dominates.
+
+**Headline finding from the current local DB:**
+
+**Operator wages are the binding constraint in all four failing pilot
+cells.** They contribute ~60% of total per-delivery overhead — more
+than every other cost component combined. The pilot story isn't
+"capital is too expensive" or "platform overhead is too high"; it's
+that `operator_to_drone_ratio = 0.50` forces 250 operators to support
+500 drones at $240 / day each, and the per-delivery share never falls
+below ≈ $15. No domain in the registry has source value above that.
+
+**Five-component breakdown for the failing pilot cells:**
+
+| capacity × domain | platform | drone leases | **operator wages** | maintenance | chargers | total $/del. | gap $/del. |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| pilot × food_delivery     | 0.10 | 1.88 | **15.00 (60.1%)** | 7.00 | 1.00 | 24.98 | −13.74 |
+| pilot × medical_delivery  | 0.62 | 1.89 | **15.14 (58.3%)** | 7.32 | 1.01 | 25.98 |  −9.53 |
+| pilot × retail_package    | 0.16 | 1.88 | **15.07 (59.9%)** | 7.06 | 1.00 | 25.17 | −13.28 |
+| pilot × urgent_documents  | 1.00 | 1.88 | **15.00 (58.0%)** | 7.00 | 1.00 | 25.88 | −11.98 |
+
+The lever that fixes pilot isn't demand-side (different domain, more
+volume); it's productivity-side. Doubling `deliveries_per_drone_per_day`
+from 8 → 16 roughly halves the required drone count, which halves the
+required operator count, which halves the operator-wages component.
+That's the structural difference between `pilot_capacity` and
+`regional_capacity`: regional has 20 deliveries / drone / day AND a
+lower 0.15 operator-to-drone ratio, so operator wages collapse to a
+fraction of pilot's level.
+
+**Aggregate observations:**
+
+- 12 cells total: 8 viable, 4 capacity-overhead-dominated, 0
+  addressable-demand-capped — every current failure is a cost problem,
+  not a demand problem.
+- Across all 4 failing cells, **`operator_wages` is the dominant cost
+  component** — that's the histogram in `pain_points.dominant_cost_counts`.
+- `regional_capacity` achieves break-even for every domain within
+  addressable demand; lowest at 150 deliveries / day.
+- `dense_urban_capacity` achieves break-even for every domain within
+  addressable demand; lowest at 250 deliveries / day.
+
+The workbench renders this same diagnostic live under the **Why some
+cells don't work** section on both the Overview and Main Finding pages,
+including a tooltip that shows the full five-component breakdown for
+each cell.
+
+## Key findings — what-if and service-mix layers
+
+The viability grid is the static answer; the interactive layers show
+*which assumptions move it*. All numbers below are from the current
+local DB (`data/delivery_system.sqlite`) and reproduce via
+`bash scripts/run_demo.sh`.
+
+- **Capacity assumptions dominate, and the binding cost is staffing.**
+  The "why" diagnostics attribute every failing `pilot_capacity` cell
+  to **operator wages** (~60 % of per-delivery overhead), not capital.
+- **Operator staffing alone is not enough.** Reducing pilot staffing
+  from **0.60 → 0.20 operators per drone** narrows the modelled gap from
+  **−$15.89 to −$3.89 per delivery** (at pilot's native 8 deliveries /
+  drone / day) — a large improvement that still **does not** reach
+  break-even. Productivity has to move with it; the two-parameter
+  explorer shows the red→green diagonal where both levers combine.
+- **Service mixes improve the modelled position but don't erase the
+  overhead floor.** At `pilot_capacity` and 650 deliveries/day,
+  `pharmacy_courier` was the best listed mix (**−$9.82** / delivery) and
+  `platform_mixed_local` the weakest (**−$11.94**). **Every** listed mix
+  beat its own weakest component — yet all stayed negative under pilot.
+- **This is the thesis in miniature:** blending domains and tuning
+  assumptions can lift the modelled position, but none of it removes the
+  capacity-overhead floor by itself. Targeted augmentation under
+  favourable capacity beats broad replacement under baseline capacity.
+
+## What this demonstrates
+
+Skills the project exercises, in roughly the order a reviewer would
+encounter them:
+
+- **Event-driven data modelling.** Append-only `delivery_events` log
+  with projections rebuilt deterministically from the event stream.
+- **Snapshot-based analytical lineage.** Per-trip, per-overlay snapshot
+  tables (`trip_economics_snapshots`, `trip_scale_snapshots`,
+  `telemetry_observations`) joined back through `transformation_runs`
+  for full provenance.
+- **Rerunnable transforms.** Economics, scale, hybrid, and telemetry
+  overlays composed in pipeline order; every recompute writes a new
+  `transformation_runs` row carrying git commit + parameter JSON.
+- **Rule-based validation.** Structural invariants across the snapshot
+  tables, severity-tagged (INFO / WARN / ERROR), audited per-run.
+- **Capacity-coupled cost modelling.** Required fleet, operators, and
+  chargers derived from delivery volume rather than asserted.
+- **Synthetic comparative analytics.** Bounded domain-volume-response
+  helpers, sweep-driven break-even discovery, viability cross-tab.
+- **FastAPI + React analytical workbench.** Read-only routes over the
+  same snapshot tables; routed UI with shareable URLs for every
+  analytical view.
+- **Single-command launcher.** `python workbench.py` boots backend and
+  frontend in one terminal with pre-flight schema migration.
+
+## What this does not claim
+
+- **Not a routing or operations system.** No GIS, no path planning,
+  no charging-queue simulation, no traffic.
+- **Not real demand or cost data.** Every dollar value is synthetic and
+  documented as such at its registry of origin.
+- **Not predictive.** Curves and cells answer *"if these assumptions
+  held, what would the model say?"* — they do not forecast real demand
+  elasticity.
+- **Not measured fleet productivity.** `deliveries_per_drone_per_day`
+  is an analytical knob; it is not validated against any drone vendor's
+  duty-cycle data.
+
+## Run it
+
+```bash
+# One-time seed (≈30 s on a typical laptop):
+python run_scenarios.py --scenarios urban_dense suburban_standard rural_extended --trips 100 --seed 42
+python run_transforms.py --all-runs --all-delivery-domains
+python run_transforms.py --all-runs --all-scale-models
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+
+# Launch (single command, opens http://localhost:5173):
+python workbench.py
 ```
-synthetic simulator  →  SQLite (operational store)  →  JSONL export  →  SQL analytics
+
+`workbench.py` handles the FastAPI backend and Vite dev server in one
+terminal, runs `npm install` on first boot, and forwards Ctrl-C for a
+clean shutdown.
+
+## Architecture
+
+```mermaid
+graph LR
+    A[run_scenarios.py<br/>seed · trips · scenario] -->|simulator| B[(SQLite<br/>delivery_events<br/>telemetry_observations<br/>trips · drones · orders)]
+    B --> C{transforms/}
+    C -->|economics| D[trip_economics_snapshots<br/>per trip × domain]
+    C -->|scale| E[trip_scale_snapshots<br/>per trip × scale_model]
+    C -->|telemetry| F[telemetry_summaries]
+    D --> G[core/volume_sensitivity<br/>capacity-coupled overhead<br/>+ domain volume response]
+    E --> G
+    G --> H[core/portfolio_summary<br/>viability cross-tab]
+    H --> I[FastAPI<br/>analytics endpoints]
+    I --> J[React workbench<br/>http://localhost:5173]
+    B -.->|transformation_runs · git commit · parameters_json| C
+    H -.->|validation summary| I
 ```
 
----
+**Suggested GitHub About**: *Event-driven analytics pipeline using
+synthetic drone delivery data to evaluate last-mile delivery economics.*
 
-## Why this project exists
+<details>
+<summary>Numbers shown above (live snapshot)</summary>
 
-An earlier version of this repo focused on A* pathfinding over real
-elevation data — interesting, but the value lived in the routing
-algorithm, not in the data it produced.
+The bullet list above is generated from `core.portfolio_summary.generate_portfolio_summary`.
+The raw aggregator output against the current `data/delivery_system.sqlite`:
 
-The project has since shifted focus toward **how a delivery system
-generates data** and how that data is modeled, stored, and queried.
-The simulator does not try to be a realistic routing engine; it tries
-to be a realistic *event producer* so that the rest of the project —
-schema design, projections, exports, and analytics — has something
-honest to chew on.
+```json
+{
+  "viability_states":            {"viable": 8, "beyond": 0, "never": 4},
+  "viability_by_capacity": {
+    "dense_urban_capacity":      {"viable": 4, "beyond": 0, "never": 0},
+    "pilot_capacity":            {"viable": 0, "beyond": 0, "never": 4},
+    "regional_capacity":         {"viable": 4, "beyond": 0, "never": 0}
+  },
+  "capacity_models_fully_viable": ["dense_urban_capacity", "regional_capacity"],
+  "capacity_models_fully_red":    ["pilot_capacity"],
+  "capacity_models_mixed":        [],
+  "headline": {
+    "lowest_breakeven_cells": [
+      {"capacity_model": "regional_capacity", "delivery_domain": "medical_delivery",
+       "breakeven_deliveries_per_day": 150, "addressable_ceiling": 800},
+      {"capacity_model": "regional_capacity", "delivery_domain": "urgent_documents",
+       "breakeven_deliveries_per_day": 150, "addressable_ceiling": 600}
+    ],
+    "tightest_addressable_ceiling": {"domain": "urgent_documents", "ceiling": 600}
+  },
+  "pain_points": {
+    "constraint_counts":         {"viable": 8, "capacity_overhead": 4},
+    "observations": [
+      {"kind": "capacity_uniformly_viable",
+       "capacity_model": "dense_urban_capacity",
+       "headline": "dense_urban_capacity achieves break-even for every domain within addressable demand; lowest at 250 deliveries/day."},
+      {"kind": "capacity_uniformly_red",
+       "capacity_model": "pilot_capacity",
+       "headline": "pilot_capacity is uniformly red — every domain hits a capacity-overhead floor that exceeds source profit at maximum addressable demand.",
+       "worst_gap_per_delivery": -13.74},
+      {"kind": "capacity_uniformly_viable",
+       "capacity_model": "regional_capacity",
+       "headline": "regional_capacity achieves break-even for every domain within addressable demand; lowest at 150 deliveries/day."}
+    ],
+    "non_viable_anchors": [
+      {"cell": "pilot × food_delivery",     "anchor_d": 4000, "drones": 500, "overhead": 24.98, "profit_pre_overhead": 11.24, "gap": -13.74},
+      {"cell": "pilot × medical_delivery",  "anchor_d":  650, "drones":  82, "overhead": 25.98, "profit_pre_overhead": 16.45, "gap":  -9.53},
+      {"cell": "pilot × retail_package",    "anchor_d": 2500, "drones": 313, "overhead": 25.17, "profit_pre_overhead": 11.89, "gap": -13.28},
+      {"cell": "pilot × urgent_documents",  "anchor_d":  400, "drones":  50, "overhead": 25.88, "profit_pre_overhead": 13.89, "gap": -11.98}
+    ]
+  },
+  "run_counts":                  {"simulation_runs": 3, "experiments": 3}
+}
+```
 
-Legacy pathfinding code is preserved under `legacy/terrain_v1/` but is
-not integrated into the current event flow.
+Regenerate with:
 
----
+```bash
+python -c "from core.portfolio_summary import generate_portfolio_summary; \
+import json; \
+print(json.dumps(generate_portfolio_summary('data/delivery_system.sqlite'), indent=2))"
+```
 
-## Current capabilities
+</details>
 
-- Deterministic synthetic event generation (`--seed`).
-- Fleet, order, trip, and trip-leg modeling.
-- Append-only `delivery_events` table — the immutable audit log.
-- Projection tables (`orders`, `drones`, `trips`, `trip_legs`) maintained
-  atomically with each event.
-- JSONL export for portable downstream ingestion.
-- SQLite-compatible analytics queries.
-- Single-file CLI runners (`run_simulation.py`, `run_analytics.py`).
-- Legacy A* pathfinding work preserved on disk.
+<details>
+<summary>Deep dive: architecture, scenarios, overlays, lineage, validation</summary>
+
+The sections below describe the operational pipeline in detail. They
+existed before the portfolio rewrite and are preserved for technical
+review.
+
+</details>
 
 ---
 
@@ -716,6 +969,516 @@ curl http://localhost:8000/analytics/scale-models
 
 ---
 
+## Volume sensitivity — capacity-coupled (Phase 28)
+
+Phase 27 introduced a volume sweep over `deliveries_per_day` for a fixed
+scale-model cost structure. Useful, but flawed: holding `fleet_size`
+and support overhead constant while sweeping volume let a 5-drone
+pilot model absorb 6000 deliveries/day with no extra capacity. Phase 28
+corrects this by **deriving required capacity from volume** rather than
+asserting it.
+
+### Correction
+
+Instead of:
+
+```
+amortized_overhead_per_trip  =  fixed_daily_overhead / deliveries_per_day
+```
+
+we now compute:
+
+```
+required_drones        = ceil(deliveries_per_day / deliveries_per_drone_per_day)
+required_operators     = ceil(required_drones × operator_to_drone_ratio)
+required_maintenance   = ceil(required_drones × maintenance_staff_per_drone)
+required_chargers      = ceil(required_drones × charger_to_drone_ratio)
+
+daily_capacity_overhead =
+      platform_fixed_cost_usd_day
+    + required_drones      × drone_daily_lease_or_depreciation_usd
+    + required_operators   × operator_daily_cost_usd
+    + required_maintenance × maintenance_daily_cost_usd
+    + required_chargers    × charger_daily_cost_usd
+
+capacity_overhead_per_delivery = daily_capacity_overhead / deliveries_per_day
+
+effective_profit = source_profit  −  capacity_overhead_per_delivery
+```
+
+Capacity has a floor (you need at least one drone, one operator, one
+charger); the per-delivery overhead therefore does not collapse to zero
+at high volume the way Phase 27's 1/x curve did. The curves are
+**staircase-shaped** because every `required_*` quantity is integer-
+valued — each step reflects a discrete capacity threshold crossing.
+
+### What this is and is not
+
+- It is a **synthetic comparative model** of how unit economics shift
+  with assumed productivity and cost structure.
+- It is **not** a production capacity planner. Real diseconomies of
+  scale (regional dispatch, multi-depot routing, charger contention,
+  shift coverage) are not modelled.
+
+### Capacity model registry
+
+`core/capacity_models.py` exposes three built-in profiles:
+
+| Profile | deliveries/drone/day | operators/drone | chargers/drone | platform $/day |
+|---|---:|---:|---:|---:|
+| `pilot_capacity`       | 8  | 0.50 | 1.0 | 400  |
+| `regional_capacity`    | 20 | 0.15 | 0.5 | 1200 |
+| `dense_urban_capacity` | 30 | 0.08 | 0.4 | 3500 |
+
+Defaults reproduce the Phase 23 `ScaleModel` daily-overhead values
+within ~10% at each profile's natural volume so reviewers can sanity-
+check against the existing scale-model numbers.
+
+### Deliberate departure: no utilization rebate
+
+Phase 23's `ScaleModel` formula carries a utilization rebate term:
+
+```python
+rebate = utilization_efficiency × idle_reduction_factor × source_op_cost
+```
+
+That rebate was a counterweight that prevented large fleets from looking
+strictly worse under the original fixed-overhead amortization. In the
+capacity-coupled model, utilization is already encoded directly via
+`deliveries_per_drone_per_day` — a 30-deliveries/drone/day profile vs an
+8-deliveries/drone/day profile **is** the economy-of-scale story.
+Carrying the rebate forward would double-count utilization.
+
+So the capacity-coupled formula has no rebate. Persisted Phase 23 scale
+snapshots keep their original numbers (we didn't migrate history);
+new capacity-coupled computations are clean of the fudge factor.
+
+### Transition state
+
+The capacity-coupled and domain-response models live on top of the
+older fixed-overhead formula rather than replacing it, so the workbench
+runs two analytical surfaces in parallel:
+
+| Surface | Overhead model | Domain volume response |
+|---|---|---|
+| `/analytics/volume-sensitivity` | capacity-coupled (Phase 28) | yes (Phase 29) |
+| `/analytics/scale-models` | fixed-overhead (Phase 23/27) | no |
+| `/analytics/domain-scale-matrix` | fixed-overhead (Phase 23/27) | no |
+| Main Finding "Best combination" | fixed-overhead (Phase 23/27) | no |
+
+The workbench's Volume Sensitivity section carries a banner noting
+this. A future phase will reconcile — either by deriving `ScaleModel`
+from `CapacityModel`, retiring one registry, or migrating
+`transforms/scale.py` to the new formula and backfilling.
+
+### Phase 29 — synthetic domain volume response
+
+Phase 28 corrected *capacity coupling* but left every domain producing
+the same curve shape — same staircase, just shifted vertically by each
+domain's `(source_profit)` baseline. Phase 29 layers a synthetic
+*domain-specific* response on top so different domains can have
+differently-shaped curves as volume rises.
+
+**Two bounded helpers**, both pure functions, both saturating at the
+domain's `saturation_volume_per_day`:
+
+```
+# Cost-side: a fraction of operational cost recovered as volume rises.
+# Log-saturating: fast early gain, flattens to the cap.
+domain_efficiency_credit(d, avg_op_cost, dom) ≤  avg_op_cost  × dom.volume_efficiency_gain_rate
+
+# Revenue-side: average willingness-to-pay dilutes as casual volume enters.
+# Linear-to-saturation: rises linearly, then flat.
+domain_value_decay(d, avg_revenue, dom)       ≤  avg_revenue  × dom.volume_value_decay_rate
+```
+
+Both terms have **concrete upper bounds derivable from the row**.
+Neither grows without limit.
+
+The composite formula uses an *adjusted revenue / adjusted operational
+cost* decomposition so each per-row dollar is auditable:
+
+```
+adjusted_revenue = avg_revenue          − domain_value_decay
+adjusted_op_cost = avg_operational_cost − domain_efficiency_credit
+effective_profit = adjusted_revenue − adjusted_op_cost
+                 − capacity_overhead_per_delivery
+```
+
+**This is not measured demand elasticity.** It is a transparent
+comparative assumption layer — three new fields per `DeliveryDomain`
+(`volume_efficiency_gain_rate`, `volume_value_decay_rate`,
+`saturation_volume_per_day`) that let analysts ask *"under these
+assumptions, how would different domain shapes compare?"*
+
+These fields are **sweep-time only**. They do not enter the persisted
+`trip_economics_snapshots`; changing them does not trigger any
+recompute. The `DeliveryDomain` dataclass docstring labels static vs
+dynamic fields explicitly.
+
+#### `saturation_volume_per_day` = addressable-demand ceiling
+
+The Phase 29 revision reframes `saturation_volume_per_day` as the
+**addressable-demand ceiling**, not just a math knob. Both response
+terms saturate there; *and* the volume-sensitivity sweep flags rows
+past it as `within_addressable_demand=false`. Charts render the within
+segment as a soft solid staircase, the beyond segment as a dashed
+extrapolation, so a reviewer doesn't mistake a curve that extends to
+6000 deliveries/day for a claim that a medical-delivery hub serves
+6000 orders/day.
+
+#### Built-in response values
+
+| Domain | efficiency gain rate | value decay rate | addressable/day |
+|---|---:|---:|---:|
+| `food_delivery`    | 0.06 | 0.12 | 4000 |
+| `medical_delivery` | 0.03 | 0.06 |  800 |
+| `retail_package`   | 0.08 | 0.05 | **3000** |
+| `urgent_documents` | 0.03 | 0.18 |  600 |
+
+Picked so that response effects sit at 10–30 % of source profit at
+moderate volume — visible but not dominant relative to capacity
+overhead. The registry version is `v3`:
+
+- `v1 → v2` (Phase 29): added the three response fields.
+- `v2 → v3` (Phase 29 revision): retail addressable ceiling 5000 → 3000
+  (a metro that supports 4000 food deliveries/day will not also yield
+  5000 retail/day), and the addressable-demand framing for charts /
+  tables.
+
+#### What chart to inspect
+
+`capacity_coupled_profit_by_volume.png` is the **composite** — capacity
+staircase + domain response superimposed. Each domain's solid line
+runs to its addressable-demand ceiling; a dashed continuation shows
+what the formula would extrapolate to beyond. The dashed segments
+exist so the math stays auditable without misleading anyone into
+treating extrapolated regions as conclusions. Read alongside
+`domain_response_components_by_volume.png` (small multiples, one panel
+per domain, three lines per panel, same dashed convention) to see what
+each lever contributes to each curve.
+
+### Running it
+
+```bash
+# Direct call:
+python -c "from core.volume_sensitivity import volume_sensitivity; \
+import json; \
+print(json.dumps(volume_sensitivity('data/delivery_system.sqlite')[:3], indent=2))"
+
+# API:
+curl 'http://localhost:8000/analytics/volume-sensitivity?capacity_model=pilot_capacity'
+
+# Charts:
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+#   capacity_coupled_profit_by_volume.png   (Phase 28 — primary)
+#   required_drones_by_delivery_volume.png  (Phase 28 — supporting)
+#   effective_profit_by_delivery_volume.png (Phase 27 legacy — for the "before" view)
+
+# Workbench:
+#   /domain-scale → "Volume sensitivity (capacity-coupled)" section.
+```
+
+### What chart to inspect
+
+`capacity_coupled_profit_by_volume.png` is the primary view. One line
+per delivery domain, log x-axis, horizontal zero line. The Phase 27
+`effective_profit_by_delivery_volume.png` is intentionally kept as the
+visible "before" — comparing the two side-by-side is the most direct
+way to see what Phase 28 corrected.
+
+---
+
+## Volume sensitivity (Phase 27 — legacy)
+
+The Phase 23 named scale models are four discrete cost-structure
+templates. They answer "what does it look like at pilot vs urban-dense
+vs national?" but they cannot answer the smoother question: *as
+deliveries/day rises within one cost structure, how does effective
+profit per delivery move?*
+
+That smoother question matters because **`fleet_size` is a capacity
+proxy; `deliveries_per_day` is the actual economic denominator**:
+
+```
+amortized_overhead_per_trip  =  daily_overhead_usd  /  deliveries_per_day
+```
+
+A curve over fleet_size obscures the lever. A curve over
+deliveries_per_day surfaces it directly.
+
+### What the sensitivity computes
+
+`core/volume_sensitivity.py` is a **read-only** sweep. For each point in
+`DEFAULT_DELIVERIES_PER_DAY_SWEEP = [25, 50, 100, 150, 250, 400, 650,
+1000, 1500, 2500, 4000, 6000]`, it:
+
+1. Clones the chosen base `ScaleModel` with only its `deliveries_per_day`
+   replaced. **Every other field — `fleet_size`, staffing ratios,
+   utilization — is held constant** so the only varying quantity is the
+   amortization denominator.
+2. Reads every trip's most-recent economics snapshot per
+   `(trip, domain_name)` from `trip_economics_snapshots`.
+3. Recomputes `effective_profit = source_profit − cloned_overhead +
+   (util_eff × idle_red × source_op_cost)` — same formula as the
+   persisted scale transform.
+4. Aggregates per `(delivery_domain, deliveries_per_day)` cell.
+
+No snapshot rows are written. No `transformation_runs` row is recorded.
+This is exploratory analysis, not a permanent transform layer.
+
+### Caveat surfaced by this view
+
+`daily_overhead_usd` is built on a **per-drone** basis (staffing scales
+with `fleet_size`, fixed daily overheads are flat). Sweeping
+`deliveries_per_day` against a small fleet's cost structure therefore
+implies very high per-drone utilization — which the synthetic model
+permits without complaint. The curves should be read as *cost-structure
+sensitivity given today's per-drone model*, not as a forecast of real
+large-scale economics. Real diseconomies (regional dispatch, multi-depot
+overhead growth) aren't modelled.
+
+### Running it
+
+```bash
+# Direct call:
+python -c "from core.volume_sensitivity import volume_sensitivity; \
+import json; \
+print(json.dumps(volume_sensitivity('data/delivery_system.sqlite')[:3], indent=2))"
+
+# API:
+curl 'http://localhost:8000/analytics/volume-sensitivity?scale_model=pilot_program'
+
+# Chart:
+python run_visualizations.py --db data/delivery_system.sqlite --out outputs/charts
+#   produces outputs/charts/effective_profit_by_delivery_volume.png
+#   and       outputs/charts/amortized_overhead_by_delivery_volume.png
+
+# Workbench:
+#   /domain-scale page → "Volume sensitivity" section near the bottom.
+#   Switch the cost-structure tab to recompute the per-cell table; the
+#   PNG itself is rendered at pilot_program until you regenerate charts.
+```
+
+The default cost-structure template is `pilot_program` (the smallest
+fleet) — the most honest baseline for "before economies of scale" since
+its low daily-overhead floor amortizes early. Larger templates can be
+selected via the API's `scale_model=…` query param or the workbench tab.
+
+### What chart to inspect
+
+`effective_profit_by_delivery_volume.png` is the primary view: one line
+per delivery domain, log x-axis, horizontal zero line. The shape of
+every curve is identical (1/x amortization decay shifted by each
+domain's `revenue − op_cost`); the useful comparison is *where each
+line crosses zero* — i.e. at what deliveries/day each domain clears
+overhead under the chosen cost structure.
+
+---
+
+## Parameter sweeps (Phase 31)
+
+Test specific what-ifs without forking the registry. A *synthetic name*
+encodes a base entry plus field overrides in one string:
+
+```
+food_delivery@saturation_volume_per_day=1500
+food_delivery@saturation_volume_per_day=1500,premium_share=0.25
+```
+
+`get_domain()` resolves these transparently — the base is looked up in
+the registry, the overrides are applied via `dataclasses.replace`, and
+the synthetic string becomes the instance's `name`. Because every
+reader (volume sensitivity, viability grid, FailureModes diagnostics)
+resolves domains through the same getter, synthetic variants flow
+through the whole analytical stack with **zero reader changes**. The
+audit trail is self-describing: `SELECT DISTINCT domain_name FROM
+trip_economics_snapshots` shows exactly which variants were computed.
+
+Three ways to run a sweep:
+
+```bash
+# Ad-hoc from the CLI (records an _adhoc_<timestamp> experiment):
+python run_experiment.py --sweep delivery_domain.saturation_volume_per_day \
+                        --base food_delivery --values 1500,2500,4000
+
+# The built-in named sweep:
+python run_experiment.py --name food_saturation_sensitivity
+
+# Directly in code:
+economics.run(db, delivery_domain="food_delivery@saturation_volume_per_day=1500")
+```
+
+Semantics pinned by tests:
+
+- **Append-only.** Sweep variants are appended to the experiment's
+  domain axis; the base is never implicitly added or removed — include
+  it in `delivery_domains` yourself for a baseline row (the built-in
+  does).
+- **Values trial-coerce** `int → float → str`. Numeric and string
+  fields only; bools/containers are out of scope.
+- **Registered names cannot contain `@`** — asserted at import.
+- **Phase 31 scope is `delivery_domain` only.** Capacity-model sweeps
+  need a read-side mechanism (the viability grid reads the capacity
+  axis from the registry, not from snapshots) and are deferred.
+
+Synthetic variants appear as extra italic columns in the viability grid
+(workbench + published chart) with the override shown under the base
+name.
+
+## Interactive what-if experiments (Phase 32)
+
+Phase 31 added parameter sweeps for delivery domains. Phase 32 extends
+them to **capacity models** and exposes a what-if launcher in the
+workbench, so a reviewer can ask:
+
+> *What `operator_to_drone_ratio` would make `pilot_capacity` viable?*
+
+and watch the viability grid gain new columns.
+
+The two dimensions differ on the read side, and the design is honest
+about it:
+
+- **`delivery_domain`** is *write-side*: the synthetic name lands in
+  `trip_economics_snapshots.domain_name`; readers discover it via
+  `SELECT DISTINCT domain_name`.
+- **`capacity_model`** is *read-side*: capacity is never persisted to a
+  snapshot table — `volume_sensitivity` applies the `CapacityModel`
+  cost structure in-memory at read time. So a capacity what-if writes
+  **no new snapshots**; it records its synthetic names in the
+  `experiment_runs` definition, and `discover_synthetic_capacities()`
+  unions them into the viability grid's capacity axis.
+
+Both dimensions use the **same synthetic-name protocol** (`base@field=value`),
+the **same experiment record** (`experiment_runs`), and the **same
+runner** — there is no second execution path.
+
+**Grid scoping.** To keep the viability grid readable, it shows the
+registered profiles plus only the **single most-recent** what-if's
+variants — not every experiment ever run. Launch three sweeps in a row
+and only the third's variants appear; the grid stays a fixed size.
+(Pass an explicit capacity/domain list to `compute_viability_summary`
+to override this and inspect any specific set.)
+
+### Three ways to run a capacity sweep
+
+```bash
+# Built-in named experiment:
+python run_experiment.py --name pilot_operator_ratio_sensitivity
+
+# Ad-hoc from the CLI:
+python run_experiment.py --sweep capacity_model.operator_to_drone_ratio \
+                        --base pilot_capacity --values 0.60,0.45,0.30,0.20
+
+# From the workbench: Experiments page → What-if launcher.
+```
+
+```bash
+# Domain sweep (Phase 31) still works the same way:
+python run_experiment.py --sweep delivery_domain.saturation_volume_per_day \
+                        --base food_delivery --values 1500,2500,5500
+```
+
+### What the built-in capacity sweep shows
+
+Against the reference DB, `pilot_operator_ratio_sensitivity` produces
+(retail_package, anchored at the addressable ceiling):
+
+| capacity variant | gap $/delivery |
+|---|---:|
+| `pilot_capacity` (base, ratio 0.50) | −13.74 |
+| `…@operator_to_drone_ratio=0.60` | −15.89 |
+| `…@operator_to_drone_ratio=0.45` | −11.38 |
+| `…@operator_to_drone_ratio=0.30` |  −6.87 |
+| `…@operator_to_drone_ratio=0.20` |  −3.89 |
+
+Halving the operator ratio (0.5 → 0.20) cuts the per-delivery loss by
+roughly two-thirds — but pilot still doesn't clear zero. The lever is
+real and visible; the model isn't tuned to manufacture a green cell.
+That's the honest answer to "what would make pilot viable?": operator
+staffing alone isn't enough — it has to combine with higher per-drone
+productivity.
+
+### Two-parameter explorer
+
+The single-lever answer above immediately invites the two-lever
+question. The **Two-parameter explorer** (Domain & Scale page) fixes a
+base capacity and a domain, then sweeps *two* capacity parameters
+against each other into a heatmap — each cell a multi-override synthetic
+name (`pilot_capacity@operator_to_drone_ratio=0.4,deliveries_per_drone_per_day=16`)
+coloured by viability margin. It's the same protocol and the same
+read-side computation; it just renders the *interaction* surface the
+1-D launcher can't. Against the reference DB
+(pilot_capacity × retail_package, operator ratio vs deliveries/drone/day):
+
+| ↓ d/drone \ ratio → | 0.6 | 0.4 | 0.2 |
+|---|---:|---:|---:|
+| **8**  | −15.89 | −9.94 | −3.89 |
+| **16** | −2.05 | **+1.02** | **+3.99** |
+| **24** | **+2.73** | **+4.74** | **+6.76** |
+
+The red→green diagonal is the finding: pilot is stuck at 8
+deliveries/drone/day regardless of staffing, but lifting productivity to
+16 *and* tightening the operator ratio is what actually flips it. This
+explorer is read-side and ephemeral — recomputed on demand, never
+persisted (the 1-D what-if launcher remains the audit-trailed path).
+
+## Multi-domain service mix analysis (Phase 33)
+
+Real delivery operators rarely serve a single pure domain — a courier
+network blends urgent documents, lab-adjacent medical deliveries, and
+some general packages. A **service mix** is a named *weighted portfolio*
+of existing delivery domains. It is an analytical overlay, **not** a new
+simulated business: it reuses the existing domain economics, capacity
+coupling, and Phase 29 volume-response logic.
+
+### Split-volume model
+
+A mix at total `deliveries_per_day = V` serves each component domain at
+`V × weight`. Each component is therefore evaluated at *its own share* of
+the volume, keeping it inside that domain's addressable-demand ceiling —
+which is precisely why an operator blends: to reach higher total volume
+without pushing any single thin market past saturation. Capacity overhead
+is **shared** (one fleet sized for the total V), applied once to the blend:
+
+```
+shared_overhead        = capacity_overhead_per_delivery(capacity, V)
+component_effective(d) = source_profit_d
+                       + efficiency_credit(d, V × weight_d)
+                       − value_decay(d, V × weight_d)
+                       − shared_overhead
+mix_effective          = Σ weight_d × component_effective(d)
+```
+
+### Built-in service mixes
+
+| Mix | Components | Intent |
+|---|---|---|
+| `urgent_medical_courier` | 60% urgent_documents, 40% medical_delivery | Time-sensitive courier + small medical payloads |
+| `pharmacy_courier` | 70% medical_delivery, 20% urgent_documents, 10% retail_package | Pharmacy/medical supply with courier spillover |
+| `local_courier_mix` | 45% urgent_documents, 35% retail_package, 20% medical_delivery | Same-day mixed small-item demand |
+| `platform_mixed_local` | 50% food_delivery, 30% urgent_documents, 20% retail_package | Broad platform mix; intentionally may show dilution |
+
+Example: `urgent_medical_courier` = 60% urgent_documents + 40%
+medical_delivery. At 1000 total deliveries/day the model serves 600
+urgent-document and 400 medical deliveries, all on one shared fleet.
+
+### How to view it
+
+- **Workbench:** Domain & Scale page → "Service-mix analysis" section
+  (capacity selector + table + chart).
+- **API:** `GET /analytics/service-mixes?capacity_model=pilot_capacity`
+- **Chart:** `service_mix_profit_by_volume.png` — one line per mix, dashed
+  where a component exceeds its addressable demand.
+
+The portfolio summary surfaces the best/worst mix and how many mixes beat
+their own weakest component — a mix can lift an operator above its
+weakest pure domain by keeping each component inside its ceiling while
+filling shared capacity with other demand. Not all domain combinations
+are operationally coherent (e.g. food delivery's freshness/timing
+constraints don't behave like general retail), so the built-ins are
+restrained.
+
 ## Hybrid logistics augmentation
 
 Earlier phases framed the project as "drones vs. trucks." That framing
@@ -858,6 +1621,24 @@ truck delivery. With an editable `truck_cost_per_delivery` knob the UI
 shows truck baseline cost vs drone operational cost vs the difference,
 both in aggregate and per scenario. Synthetic, illustrative — never
 forecasting.
+
+**Single-command launch** (recommended):
+
+```bash
+python workbench.py
+# Pre-flights the DB, installs frontend deps if needed, boots uvicorn
+# on :8000 and Vite on :5173, opens the browser, and tags both
+# processes' output with [api]/[web].  Ctrl-C stops both.
+#
+# Flags:
+#   --no-browser   skip auto-opening http://localhost:5173
+#   --db PATH      override DRONE_API_DB
+#   --reload       hot-reload the backend on .py edits
+#   --port-api N   override backend port (default 8000)
+#   --port-web N   override frontend port (default 5173)
+```
+
+**Manual two-terminal launch** (if you prefer):
 
 ```bash
 # Terminal 1 — backend
@@ -1144,9 +1925,46 @@ Charts produced:
 
 ---
 
+## v1.0 scope
+
+What `v1.0-portfolio` delivers, end to end:
+
+- **Synthetic source-data generation** — deterministic, seed-driven
+  operational events + telemetry.
+- **Event-driven pipeline** — append-only log + rebuilt projections.
+- **Transformation & validation layers** — rerunnable overlays with
+  per-row lineage; rule-based structural validation.
+- **Domain / capacity / volume / service-mix analysis** — the full
+  analytical stack from delivery-domain economics through
+  capacity-coupled overhead, synthetic volume response, and weighted
+  multi-domain service mixes.
+- **Parameter sweeps** — synthetic-name variants for both delivery
+  domains and capacity models.
+- **Interactive what-if experiments** — 1-D launcher + 2-D parameter
+  explorer, surfaced live in the workbench.
+- **Portfolio workbench** — FastAPI + React, single-command launch.
+
+## Future v2 direction
+
+The clear next step is **real data**, not more synthetic modelling:
+
+- Import historical delivery records from a real delivery business.
+- Normalise that external delivery data into the same analytical schema
+  (`delivery_events` → snapshots).
+- Run the existing feasibility overlays (domains, capacity, volume,
+  service mixes, what-if) against real demand history instead of
+  synthetic generators.
+
+Real-data ingestion is **future work, not required for v1** — the v1
+contribution is the analytical framework and the workbench that make
+the assumptions visible and testable. The JSONL export path is already
+shaped for external ingestion.
+
 ## Known limitations
 
-- **Synthetic data only.** No real drones, customers, or routing.
+- **Synthetic data only.** No real drones, customers, or routing. Every
+  dollar value is an assumption documented at its registry of origin;
+  numbers rank scenarios against each other, they do not forecast.
 - **Round-robin dispatch.** The simulator does not implement realistic
   fleet selection.
 - **Simplified dispatch.** A drone in maintenance is now skipped until a
