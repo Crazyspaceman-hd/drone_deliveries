@@ -21,7 +21,7 @@
 1. **Read the Key findings** below — the whole conclusion in seven bullets.
 2. **Look at the showcase chart** (the viability grid, right under this).
 3. **Open the workbench:** `bash scripts/run_demo.sh` then `python workbench.py`.
-4. **Try the what-if launcher** (Experiments page) — change `operator_to_drone_ratio` and watch the grid recolour.
+4. **Try the what-if launcher** (Experiments page) — change `operator_to_drone_ratio` and watch the grid recolor.
 5. **Skim the architecture diagram** further down, or [`docs/portfolio_summary.md`](docs/portfolio_summary.md) for the non-technical version.
 
 ## Key findings (live, from the current local DB)
