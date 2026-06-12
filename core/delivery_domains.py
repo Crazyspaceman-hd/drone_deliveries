@@ -261,13 +261,43 @@ def list_domains() -> list[str]:
 
 
 def get_domain(name_or_obj: Union[str, DeliveryDomain, None]) -> DeliveryDomain:
-    """Resolve a domain by name, pass through a DeliveryDomain, or fall back to default."""
+    """Resolve a domain by name, pass through a DeliveryDomain, or fall
+    back to default.
+
+    Phase 31: also resolves *synthetic* names of the form
+    ``base_name@field=value[,field2=value2]``.  The base is looked up
+    in the registry; the overrides are applied via
+    :func:`core.parameter_sweeps.apply_overrides`.
+    """
     if name_or_obj is None:
         return _DOMAINS[DEFAULT_DOMAIN_NAME]
     if isinstance(name_or_obj, DeliveryDomain):
         return name_or_obj
+    # Synthetic-name path: parse out the base, look it up, apply overrides.
+    from core.parameter_sweeps import (
+        SEPARATOR, apply_overrides, parse_synthetic_name,
+    )
+    if SEPARATOR in name_or_obj:
+        base_name, overrides = parse_synthetic_name(name_or_obj)
+        try:
+            base = _DOMAINS[base_name]
+        except KeyError:
+            known = ", ".join(list_domains())
+            raise KeyError(
+                f"unknown delivery_domain base {base_name!r} (from {name_or_obj!r}); "
+                f"known: {known}"
+            )
+        return apply_overrides(base, overrides, synthetic_name=name_or_obj)
     try:
         return _DOMAINS[name_or_obj]
     except KeyError:
         known = ", ".join(list_domains())
         raise KeyError(f"unknown delivery_domain {name_or_obj!r}; known: {known}")
+
+
+# Phase 31 invariant: registered entry names cannot contain the
+# synthetic-name separator (``@``).  Asserted at import time so a
+# misnamed future addition fails loud rather than silently corrupting
+# the protocol.
+from core.parameter_sweeps import assert_no_reserved_chars as _assert_no_reserved
+_assert_no_reserved(list(_DOMAINS.keys()), "_DOMAINS")

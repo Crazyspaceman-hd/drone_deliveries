@@ -15,10 +15,22 @@ import { useApi } from './useApi.js';
  *   - red    (never)   = no sweep point clears zero
  */
 
+// Categorical fallbacks — used only when a cell lacks a numeric
+// viability_margin (defensive; the API always provides one when
+// diagnostics exist).
 export const VIABILITY_COLOURS = {
   viable: '#c8e6c9',
   beyond: '#fff59d',
   never:  '#ffcdd2',
+};
+
+// Three colour stops for the continuous diverging palette.  Matches the
+// matplotlib RdYlGn endpoints used by the published chart so the
+// workbench and the README chart read as the same picture.
+const PALETTE_STOPS = {
+  worst:  [165,  15,  21],   // dark red    #a50f15
+  middle: [255, 255, 191],   // pale yellow #ffffbf
+  best:   [  0, 104,  55],   // dark green  #006837
 };
 
 const NATURAL_CAPACITY_ORDER = [
@@ -26,6 +38,33 @@ const NATURAL_CAPACITY_ORDER = [
   'regional_capacity',
   'dense_urban_capacity',
 ];
+
+function _lerp(a, b, t) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ];
+}
+
+function _rgb(c) { return `rgb(${c[0]}, ${c[1]}, ${c[2]})`; }
+
+/**
+ * Map a viability margin (dollars per delivery, signed) onto a
+ * continuous diverging RdYlGn-like palette.  ``maxAbs`` shared across
+ * all cells normalises the gradient so positive and negative shades
+ * are symmetric and comparable.
+ */
+export function colourForMargin(margin, maxAbs) {
+  if (margin === null || margin === undefined) return '#eeeeee';
+  if (!maxAbs || maxAbs <= 0) return _rgb(PALETTE_STOPS.middle);
+  // t ∈ [0, 1] where 0 = most negative, 0.5 = neutral, 1 = most positive.
+  const t = Math.max(0, Math.min(1, (margin + maxAbs) / (2 * maxAbs)));
+  if (t < 0.5) {
+    return _rgb(_lerp(PALETTE_STOPS.worst,  PALETTE_STOPS.middle, t * 2));
+  }
+  return _rgb(_lerp(PALETTE_STOPS.middle, PALETTE_STOPS.best,   (t - 0.5) * 2));
+}
 
 export function ViabilityGrid({ showTitle = true } = {}) {
   const { data, error, loading } = useApi(api.viabilitySummary);
@@ -58,24 +97,34 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
     byCell[`${c.capacity_model}|${c.delivery_domain}`] = c;
   }
 
+  const maxAbs = data?.viability_margin_max_abs || 0;
+
   function cellLabel(c) {
     if (!c) return '—';
     const be   = c.breakeven_deliveries_per_day;
     const ceil = c.addressable_ceiling;
-    if (be === null || be === undefined) return `never\n(ceiling ${ceil}/day)`;
-    if (be <= ceil) return `≥ ${be}/day\n(ceiling ${ceil}/day)`;
-    return `breakeven ${be}/day\n(beyond ceiling ${ceil}/day)`;
+    const m    = c.viability_margin;
+    const head = (be === null || be === undefined)
+      ? `never\n(ceiling ${ceil}/day)`
+      : (be <= ceil)
+        ? `≥ ${be}/day\n(ceiling ${ceil}/day)`
+        : `breakeven ${be}/day\n(beyond ceiling ${ceil}/day)`;
+    if (m === null || m === undefined) return head;
+    const sign = m >= 0 ? '+' : '';
+    return `${head}\n${sign}$${m.toFixed(2)}/del.`;
   }
 
   function cellTitle(c) {
     if (!c) return '';
     const be = c.breakeven_deliveries_per_day;
+    const m  = c.viability_margin;
     return (
       `${c.capacity_model} × ${c.delivery_domain}\n` +
       `state: ${c.state}\n` +
       `breakeven: ${be === null ? 'never in sweep' : be + ' deliveries/day'}\n` +
       `addressable ceiling: ${c.addressable_ceiling} deliveries/day\n` +
-      `viable within addressable demand: ${c.viable_within_addressable_demand ? 'yes' : 'no'}`
+      `viable within addressable demand: ${c.viable_within_addressable_demand ? 'yes' : 'no'}\n` +
+      `viability margin at anchor: ${m === null || m === undefined ? 'n/a' : '$' + m.toFixed(2) + '/delivery'}`
     );
   }
 
@@ -96,16 +145,51 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
           <thead>
             <tr>
               <th>capacity model ↓ / domain →</th>
-              {domains.map((d) => <th key={d} className="mono">{d}</th>)}
+              {domains.map((d) => {
+                // Phase 31: synthetic parameter-sweep variants encode
+                // their overrides after '@'.  Show a compact two-line
+                // label; the full synthetic name lives in the tooltip.
+                const at = d.indexOf('@');
+                if (at === -1) return <th key={d} className="mono">{d}</th>;
+                return (
+                  <th key={d} className="mono" title={`synthetic variant: ${d}`}
+                      style={{ fontStyle: 'italic' }}>
+                    {d.slice(0, at)}
+                    <div className="muted" style={{ fontSize: 10 }}>
+                      @{d.slice(at + 1)}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {orderedCaps.map((cap) => (
+            {orderedCaps.map((cap) => {
+              // Phase 32: synthetic capacity variants get the same
+              // two-line italic treatment as synthetic domain columns.
+              const capAt = cap.indexOf('@');
+              const capHead = capAt === -1
+                ? <th className="mono row-head">{cap}</th>
+                : (
+                  <th className="mono row-head" title={`synthetic variant: ${cap}`}
+                      style={{ fontStyle: 'italic' }}>
+                    {cap.slice(0, capAt)}
+                    <div className="muted" style={{ fontSize: 10 }}>
+                      @{cap.slice(capAt + 1)}
+                    </div>
+                  </th>
+                );
+              return (
               <tr key={cap}>
-                <th className="mono row-head">{cap}</th>
+                {capHead}
                 {domains.map((dom) => {
                   const c = byCell[`${cap}|${dom}`];
-                  const colour = c ? VIABILITY_COLOURS[c.state] : '#eeeeee';
+                  // Prefer continuous margin colour; fall back to the
+                  // categorical palette only if the cell has no margin
+                  // (e.g. diagnostics empty).
+                  const colour = c && c.viability_margin !== null && c.viability_margin !== undefined
+                    ? colourForMargin(c.viability_margin, maxAbs)
+                    : (c ? VIABILITY_COLOURS[c.state] : '#eeeeee');
                   return (
                     <td
                       key={dom}
@@ -122,19 +206,35 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      <p className="muted" style={{ fontSize: 12 }}>
-        <span style={{ background: VIABILITY_COLOURS.viable, padding: '2px 8px', marginRight: 6 }}>green</span>
-        viable within addressable demand   ·{' '}
-        <span style={{ background: VIABILITY_COLOURS.beyond, padding: '2px 8px', margin: '0 6px' }}>yellow</span>
-        breakeven exists but only past the ceiling   ·{' '}
-        <span style={{ background: VIABILITY_COLOURS.never, padding: '2px 8px', margin: '0 6px' }}>red</span>
-        no breakeven in sweep
-      </p>
+      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span>colour = viability margin at addressable anchor ($/delivery):</span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          width: '100%', maxWidth: 480,
+        }}>
+          <span className="mono">−${maxAbs.toFixed(2)}</span>
+          <div style={{
+            flex: 1, height: 14,
+            background: `linear-gradient(to right, ${colourForMargin(-maxAbs, maxAbs)}, ${colourForMargin(0, maxAbs)}, ${colourForMargin(maxAbs, maxAbs)})`,
+            border: '1px solid #ccc',
+          }} />
+          <span className="mono">+${maxAbs.toFixed(2)}</span>
+        </div>
+        <p style={{ marginTop: 6 }}>
+          Negative = loss depth at the largest sweep point within
+          addressable demand. Positive = profit headroom. Cells past the
+          ceiling are coloured by their anchor margin (within addressable
+          demand) and labelled <em>beyond ceiling</em> textually.
+        </p>
+      </div>
     </section>
   );
 }

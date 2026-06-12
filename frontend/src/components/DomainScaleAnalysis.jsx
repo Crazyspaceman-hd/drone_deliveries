@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { api, chartUrl } from '../api.js';
 import { useApi } from './useApi.js';
 import { ViabilityGrid } from './ViabilityGrid.jsx';
+import { ServiceMixAnalysis } from './ServiceMixAnalysis.jsx';
 
 /**
  * The key business-facing analytical surface: how do delivery domains and
@@ -25,6 +26,7 @@ export function DomainScaleAnalysis() {
       <ScaleProfiles     call={scaleCall} />
       <Matrix            call={matrixCall} />
       <VolumeSensitivity />
+      <ServiceMixAnalysis />
       <ChartPair />
     </div>
   );

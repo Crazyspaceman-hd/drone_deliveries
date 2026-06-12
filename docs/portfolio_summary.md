@@ -50,27 +50,59 @@ bottom of this document.
 
 ## Why some cells don't work
 
-The grid says *which* cells fail. The same aggregator surfaces *why*
-under `portfolio_summary.pain_points`. Diagnostics are anchored at the
-largest sweep point within each domain's addressable demand — the
-deepest the model is allowed to look at the cell honestly.
+The grid says *which* cells fail. The same aggregator decomposes
+overhead into five components (platform fixed, drone leases, operator
+wages, maintenance, chargers) and surfaces the dominant one per cell.
 
-| capacity × domain | anchor d / day | drones | overhead $/del. | profit-pre-overhead $/del. | gap $/del. |
-|---|---:|---:|---:|---:|---:|
-| pilot × food_delivery     | 4000 | 500 | 24.98 | 11.24 | −13.74 |
-| pilot × medical_delivery  |  650 |  82 | 25.98 | 16.45 |  −9.53 |
-| pilot × retail_package    | 2500 | 313 | 25.17 | 11.89 | −13.28 |
-| pilot × urgent_documents  |  400 |  50 | 25.88 | 13.89 | −11.98 |
+**The headline:** operator wages dominate every failing pilot cell at
+~60% of total overhead.
 
-The pattern: pilot's overhead floor sits at ≈ $25 / delivery
-regardless of which domain it serves, and no domain has source value
-above that floor. The lever that fixes pilot isn't demand-side
-(different domain, more volume) — it's productivity:
-`deliveries_per_drone_per_day`. At 8 deliveries / drone / day, you
-need too many drones per unit of revenue. Across all 12 cells the
-constraint mix is 8 viable, 4 capacity-overhead-dominated, 0
-addressable-demand-capped — every current failure is a cost problem,
-not a demand problem.
+| capacity × domain | platform | drone leases | **operator wages** | maintenance | chargers | total | gap |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| pilot × food_delivery     | 0.10 | 1.88 | **15.00 (60%)** | 7.00 | 1.00 | 24.98 | −13.74 |
+| pilot × medical_delivery  | 0.62 | 1.89 | **15.14 (58%)** | 7.32 | 1.01 | 25.98 |  −9.53 |
+| pilot × retail_package    | 0.16 | 1.88 | **15.07 (60%)** | 7.06 | 1.00 | 25.17 | −13.28 |
+| pilot × urgent_documents  | 1.00 | 1.88 | **15.00 (58%)** | 7.00 | 1.00 | 25.88 | −11.98 |
+
+The pattern: pilot's `operator_to_drone_ratio = 0.50` forces 250
+operators behind 500 drones at $240 / day each. Per-delivery operator
+share never falls below ≈ $15, and no domain has source value above
+that. The lever isn't demand-side (different domain, more volume); it's
+productivity-side (`deliveries_per_drone_per_day`). Regional achieves
+viability because it pairs a higher productivity rate (20 vs 8) with a
+lower operator ratio (0.15 vs 0.50), which collapses operator wages to
+a fraction of pilot's level. Across all 12 cells the constraint mix is
+8 viable, 4 capacity-overhead-dominated (all four operator-wages
+dominant), 0 addressable-demand-capped — every current failure is a
+cost-structure problem, not a demand problem.
+
+## What-if experiments
+
+The workbench lets a reviewer change an assumption and watch the
+viability grid respond. Sweeps use a synthetic-name protocol
+(`pilot_capacity@operator_to_drone_ratio=0.30`) so every variant carries
+its own self-describing audit trail. A 1-D launcher feeds the main grid;
+a 2-D explorer renders a heatmap across two parameters at once.
+
+Headline what-if result: reducing pilot staffing from **0.60 → 0.20
+operators per drone** narrows the gap from **−$15.89 to −$3.89** per
+delivery — a big move that still does not reach break-even. The 2-D
+explorer shows the red→green diagonal where staffing *and* per-drone
+productivity improve together; neither lever alone is enough.
+
+## Service mix analysis
+
+Real operators serve blended demand, not one pure domain. A **service
+mix** is a named weighted portfolio of delivery domains, evaluated
+split-volume: a mix at total V serves each component at `V × weight`
+(keeping it inside that domain's addressable demand), while capacity
+overhead is shared across one fleet sized for the total.
+
+At `pilot_capacity`, 650 deliveries/day: best mix `pharmacy_courier`
+(**−$9.82**), worst `platform_mixed_local` (**−$11.94**). **Every** mix
+beat its own weakest component — blending lifts the position — yet all
+stayed negative under pilot. Blending helps; it does not remove the
+capacity-overhead floor by itself.
 
 ## Technical architecture
 
@@ -133,7 +165,19 @@ python workbench.py
 ```
 
 The launcher boots the FastAPI backend and Vite dev server in one
-terminal and runs `npm install` on first boot.
+terminal and runs `npm install` on first boot. Or run the full reference
+workflow in one shot: `bash scripts/run_demo.sh`.
+
+## Future v2 direction
+
+The v1 contribution is the analytical framework and the workbench that
+make assumptions visible and testable. The clear v2 step is **real
+data**: import historical delivery records from a real operator,
+normalise them into the same `delivery_events` → snapshot schema, and
+run the existing feasibility overlays (domains, capacity, volume,
+service mixes, what-if) against real demand history instead of synthetic
+generators. The JSONL export path is already shaped for that ingestion.
+Real-data ingestion is future work — not required for v1.
 
 <details>
 <summary>Live aggregator output (the numbers above)</summary>

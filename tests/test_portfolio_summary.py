@@ -8,6 +8,7 @@ import pytest
 
 from transforms import economics
 from core.portfolio_summary import (
+    COST_COMPONENTS,
     aggregate_pain_points, diagnose_viability_cells,
     generate_portfolio_summary,
 )
@@ -32,7 +33,7 @@ def test_summary_emits_every_documented_key(populated_db: str):
         "capacity_models_fully_viable", "capacity_models_fully_red",
         "capacity_models_mixed",
         "capacity_models", "delivery_domains",
-        "headline", "pain_points",
+        "headline", "pain_points", "service_mixes",
         "validation", "run_counts", "charts_dir",
     }
     s = generate_portfolio_summary(populated_db)
@@ -219,3 +220,142 @@ def test_constraint_counts_sum_to_cell_total(populated_db: str):
     assert n_total == n_cells, (
         f"constraint_counts ({n_total}) != diagnostics ({n_cells})"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost decomposition (Phase 30 follow-up 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_diagnostics_carry_cost_breakdown_keys(populated_db: str):
+    for d in diagnose_viability_cells(populated_db):
+        for k in ("cost_breakdown_at_anchor",
+                  "dominant_cost_component",
+                  "dominant_cost_share"):
+            assert k in d, f"missing key: {k}"
+
+
+def test_cost_breakdown_has_all_five_components(populated_db: str):
+    """Every diagnostic carries the five fixed components — no surprises,
+    so README + frontend can hard-code the column order without
+    defensive lookups."""
+    for d in diagnose_viability_cells(populated_db):
+        bd = d["cost_breakdown_at_anchor"]
+        assert set(bd.keys()) == set(COST_COMPONENTS), (
+            f"unexpected components: {set(bd.keys()) ^ set(COST_COMPONENTS)}"
+        )
+
+
+def test_cost_breakdown_sums_to_overhead_per_delivery(populated_db: str):
+    """The five components must reconstruct
+    ``capacity_overhead_per_delivery`` exactly (within rounding).  If
+    this ever drifts the breakdown is no longer auditable from the row."""
+    for d in diagnose_viability_cells(populated_db):
+        bd = d["cost_breakdown_at_anchor"]
+        recomputed = sum(bd.values())
+        assert recomputed == pytest.approx(
+            d["anchor_overhead_per_delivery"], abs=0.01
+        ), (
+            f"{d['capacity_model']} × {d['delivery_domain']}: "
+            f"breakdown sum {recomputed} != overhead "
+            f"{d['anchor_overhead_per_delivery']}"
+        )
+
+
+def test_cost_breakdown_components_are_non_negative(populated_db: str):
+    for d in diagnose_viability_cells(populated_db):
+        for comp, val in d["cost_breakdown_at_anchor"].items():
+            assert val >= 0, (
+                f"{d['capacity_model']} × {d['delivery_domain']}: "
+                f"{comp} = {val} (negative)"
+            )
+
+
+def test_dominant_cost_component_is_one_of_documented_values(populated_db: str):
+    for d in diagnose_viability_cells(populated_db):
+        assert d["dominant_cost_component"] in COST_COMPONENTS, (
+            f"unexpected dominant_cost_component: {d['dominant_cost_component']}"
+        )
+
+
+def test_dominant_cost_share_in_unit_interval(populated_db: str):
+    for d in diagnose_viability_cells(populated_db):
+        share = d["dominant_cost_share"]
+        assert 0.0 <= share <= 1.0, f"dominant_cost_share out of bounds: {share}"
+
+
+def test_dominant_cost_actually_is_largest_component(populated_db: str):
+    """Defensive: the named dominant_cost_component must be the
+    largest value in the breakdown.  Catches any future bug where the
+    helper accidentally returns a different field name."""
+    for d in diagnose_viability_cells(populated_db):
+        bd       = d["cost_breakdown_at_anchor"]
+        named    = d["dominant_cost_component"]
+        max_comp = max(bd, key=bd.get)
+        # Equal values are possible (rare); accept anything tied with
+        # the maximum to be safe.
+        assert bd[named] == bd[max_comp], (
+            f"named dominant {named} ({bd[named]}) != largest {max_comp} ({bd[max_comp]})"
+        )
+
+
+def test_aggregate_pain_points_includes_dominant_cost_counts(populated_db: str):
+    bundle = aggregate_pain_points(diagnose_viability_cells(populated_db))
+    assert "dominant_cost_counts" in bundle
+    counts = bundle["dominant_cost_counts"]
+    # Counts cover only non-viable cells.
+    n_non_viable = sum(1 for d in bundle["diagnostics"] if d["state"] != "viable")
+    assert sum(counts.values()) == n_non_viable
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 32a: two-parameter capacity explorer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_parameter_grid_shape(populated_db: str):
+    from core.portfolio_summary import compute_parameter_grid
+    g = compute_parameter_grid(
+        populated_db,
+        base_capacity="pilot_capacity", domain="retail_package",
+        param_x="operator_to_drone_ratio", values_x=[0.6, 0.3],
+        param_y="deliveries_per_drone_per_day", values_y=[8, 16, 24],
+    )
+    assert len(g["cells"]) == 2 * 3
+    for c in g["cells"]:
+        assert "@" in c["synthetic_name"]
+        assert c["synthetic_name"].count("=") == 2   # both overrides present
+        assert c["state"] in ("viable", "beyond", "never")
+
+
+def test_parameter_grid_applies_both_overrides(populated_db: str):
+    """A higher deliveries_per_drone_per_day must improve the margin
+    (fewer drones → less overhead), holding operator ratio fixed.
+    Structural monotonic check, not a profitability assertion."""
+    from core.portfolio_summary import compute_parameter_grid
+    g = compute_parameter_grid(
+        populated_db,
+        base_capacity="pilot_capacity", domain="retail_package",
+        param_x="operator_to_drone_ratio", values_x=[0.4],
+        param_y="deliveries_per_drone_per_day", values_y=[8, 24],
+    )
+    by_y = {c["y"]: c["viability_margin"] for c in g["cells"]}
+    assert by_y[24] > by_y[8]
+
+
+def test_parameter_grid_rejects_same_param():
+    from core.portfolio_summary import compute_parameter_grid
+    with pytest.raises(ValueError, match="must differ"):
+        compute_parameter_grid(
+            ":memory:", base_capacity="pilot_capacity", domain="retail_package",
+            param_x="operator_to_drone_ratio", values_x=[0.4],
+            param_y="operator_to_drone_ratio", values_y=[0.3],
+        )
+
+
+def test_parameter_grid_rejects_unknown_param():
+    from core.portfolio_summary import compute_parameter_grid
+    with pytest.raises(KeyError):
+        compute_parameter_grid(
+            ":memory:", base_capacity="pilot_capacity", domain="retail_package",
+            param_x="not_a_field", values_x=[1],
+            param_y="operator_to_drone_ratio", values_y=[0.3],
+        )

@@ -30,12 +30,50 @@ from __future__ import annotations
 import sqlite3
 from typing import Optional
 
-from core.capacity_models    import list_capacity_models
+from core.capacity_models    import get_capacity_model, list_capacity_models
 from core.delivery_domains   import list_domains
 from core.validation         import generate_validation_summary
 from core.volume_sensitivity import (
     compute_viability_summary, viability_state, volume_sensitivity,
 )
+
+
+# Names of the five overhead components, in the order
+# ``CapacityModel.daily_capacity_overhead`` assembles them.  Surfaced as
+# row keys + dominant-component values so README templates / frontend
+# code can iterate without hard-coding strings.
+COST_COMPONENTS = (
+    "platform_fixed",
+    "drone_leases",
+    "operator_wages",
+    "maintenance",
+    "chargers",
+)
+
+
+def _cost_breakdown_at_anchor(anchor_row: dict, cm) -> dict:
+    """Re-derive the five-component overhead breakdown at the anchor
+    sweep point.  Each value is dollars per delivery.
+
+    ``daily_capacity_overhead`` in the row dict is the sum of these five
+    components by construction, so the breakdown is auditable: every
+    dollar in ``capacity_overhead_per_delivery`` traces to one of the
+    five fields on ``CapacityModel``.
+    """
+    d = int(anchor_row["deliveries_per_day"])
+    if d <= 0:
+        return {k: 0.0 for k in COST_COMPONENTS}
+    drones      = int(anchor_row["required_drones"])
+    operators   = int(anchor_row["required_operators"])
+    maintenance = int(anchor_row["required_maintenance_staff"])
+    chargers    = int(anchor_row["required_chargers"])
+    return {
+        "platform_fixed":  round(cm.platform_fixed_cost_usd_day             / d, 4),
+        "drone_leases":    round(drones      * cm.drone_daily_lease_or_depreciation_usd / d, 4),
+        "operator_wages":  round(operators   * cm.operator_daily_cost_usd   / d, 4),
+        "maintenance":     round(maintenance * cm.maintenance_daily_cost_usd / d, 4),
+        "chargers":        round(chargers    * cm.charger_daily_cost_usd    / d, 4),
+    }
 
 
 CHARTS_DIR_DEFAULT = "outputs/charts"
@@ -234,6 +272,16 @@ def diagnose_viability_cells(
         overhead   = round(anchor["capacity_overhead_per_delivery"], 2)
         effective  = round(anchor["avg_effective_profit"], 2)
 
+        # Five-component overhead breakdown — *the* answer to "what part
+        # of overhead is the binding constraint?"  Reconstructed from
+        # the capacity arithmetic so each $/delivery traces to a single
+        # CapacityModel field.
+        cm = get_capacity_model(cap)
+        breakdown = _cost_breakdown_at_anchor(anchor, cm)
+        dominant_component = max(breakdown, key=breakdown.get)
+        breakdown_total    = sum(breakdown.values()) or 1.0
+        dominant_share     = round(breakdown[dominant_component] / breakdown_total, 4)
+
         # Attribute the dominant constraint.
         if state == "viable":
             dominant = "viable"
@@ -266,6 +314,12 @@ def diagnose_viability_cells(
             "anchor_profit_before_overhead":  profit_before_overhead,
             "anchor_effective_profit":        effective,
             "gap_at_anchor":                  effective,
+            # Cost decomposition (Phase 30 follow-up 2): $/delivery per
+            # CapacityModel cost field, plus the dominant component and
+            # its fractional share of total overhead.
+            "cost_breakdown_at_anchor":       breakdown,
+            "dominant_cost_component":        dominant_component,
+            "dominant_cost_share":            dominant_share,
         })
 
     diagnostics.sort(key=lambda d: (d["capacity_model"], d["delivery_domain"]))
@@ -348,10 +402,50 @@ def aggregate_pain_points(diagnostics: list[dict]) -> dict:
                 "cells":                   [c["delivery_domain"] for c in cells],
             })
 
+    # Aggregate dominant-cost component across non-viable cells.  The
+    # binding story for a portfolio reader: "operator wages dominate
+    # N of M failing cells" tells you exactly which CapacityModel knob
+    # is doing the damage.
+    non_viable = [d for d in diagnostics if d.get("state") != "viable"]
+    dominant_cost_counts: dict[str, int] = {}
+    for d in non_viable:
+        comp = d.get("dominant_cost_component")
+        if comp:
+            dominant_cost_counts[comp] = dominant_cost_counts.get(comp, 0) + 1
+
     return {
-        "diagnostics":       diagnostics,
-        "constraint_counts": constraint_counts,
-        "observations":      observations,
+        "diagnostics":           diagnostics,
+        "constraint_counts":     constraint_counts,
+        "observations":          observations,
+        "dominant_cost_counts":  dominant_cost_counts,
+    }
+
+
+def _service_mix_section(db_path: str) -> dict:
+    """Compact service-mix insight for the portfolio surface (Phase 33).
+
+    Best/worst mix under the default capacity at a representative volume,
+    plus how many mixes beat their own weakest component.  Additive — it
+    does not replace the what-if result.
+    """
+    try:
+        from core.service_mix_analysis import best_worst_service_mix
+        bw = best_worst_service_mix(db_path)
+    except Exception:  # pragma: no cover — never break the summary
+        return {"available": False}
+    rows = bw.get("rows", [])
+    return {
+        "available":           bool(rows),
+        "capacity_model":      bw.get("capacity_model"),
+        "deliveries_per_day":  bw.get("deliveries_per_day"),
+        "best":                bw.get("best"),
+        "worst":               bw.get("worst"),
+        "n_beating_weakest_component": sum(
+            1 for r in rows if r.get("beats_weakest_component")
+        ),
+        "n_mixes":             len(rows),
+        "caveat": ("Weighted analytical portfolios over existing delivery "
+                   "domains — not new simulated businesses."),
     }
 
 
@@ -409,7 +503,115 @@ def generate_portfolio_summary(db_path: str) -> dict:
         "delivery_domains":                list_domains(),
         "headline":                        headline,
         "pain_points":                     pain_points,
+        "service_mixes":                   _service_mix_section(db_path),
         "validation":                      validation_compact,
         "run_counts":                      _run_counts(db_path),
         "charts_dir":                      CHARTS_DIR_DEFAULT,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 32a: two-parameter capacity explorer
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Cap the grid so an accidental huge request can't run hundreds of
+# volume-sensitivity passes.  6×6 = 36 cells is plenty for exploration.
+_PARAM_GRID_MAX_PER_AXIS = 8
+
+
+def _anchor_margin(rows: list[dict]) -> tuple:
+    """Return (viability_margin, breakeven_d) for one capacity×domain's
+    sensitivity rows.
+
+    margin = avg_effective_profit at the largest sweep point still within
+    addressable demand (the honest anchor); None if no within-addressable
+    rows.  breakeven_d = smallest sweep point clearing zero, or None.
+    """
+    within = [r for r in rows if r["within_addressable_demand"]]
+    margin = None
+    if within:
+        anchor = max(within, key=lambda r: r["deliveries_per_day"])
+        margin = anchor["avg_effective_profit"]
+    breakeven = None
+    for r in sorted(rows, key=lambda r: r["deliveries_per_day"]):
+        if r["avg_effective_profit"] > 0:
+            breakeven = int(r["deliveries_per_day"])
+            break
+    return margin, breakeven
+
+
+def compute_parameter_grid(
+    db_path: str,
+    *,
+    base_capacity: str,
+    domain:        str,
+    param_x:       str,
+    values_x:      list,
+    param_y:       str,
+    values_y:      list,
+) -> dict:
+    """Two-parameter viability heatmap for a fixed (base_capacity, domain).
+
+    For each (vx, vy) pair, build the multi-override synthetic capacity
+    name ``base@param_x=vx,param_y=vy`` (Phase 31 protocol resolves both
+    overrides), run the read-side volume sweep against the fixed domain,
+    and record the viability margin (gap at the addressable anchor).
+
+    Read-side and ephemeral — no snapshots, no experiment record.
+    Deterministic given inputs.
+
+    Raises ``ValueError`` for bad shape (same param on both axes, empty
+    values, grid too large) and ``KeyError`` for unknown
+    param/base/domain.
+    """
+    import dataclasses as _dc
+    from core.capacity_models  import get_capacity_model
+    from core.delivery_domains import get_domain
+
+    if param_x == param_y:
+        raise ValueError("param_x and param_y must differ")
+    if not values_x or not values_y:
+        raise ValueError("values_x and values_y must both be non-empty")
+    if len(values_x) > _PARAM_GRID_MAX_PER_AXIS or len(values_y) > _PARAM_GRID_MAX_PER_AXIS:
+        raise ValueError(f"each axis is capped at {_PARAM_GRID_MAX_PER_AXIS} values")
+
+    base = get_capacity_model(base_capacity)   # KeyError if unknown
+    get_domain(domain)                         # KeyError if unknown
+    fields = {f.name for f in _dc.fields(base)}
+    for p in (param_x, param_y):
+        if p not in fields:
+            raise KeyError(
+                f"{p!r} is not a CapacityModel field; valid: {sorted(fields)}"
+            )
+
+    cells: list[dict] = []
+    for vy in values_y:
+        for vx in values_x:
+            synth = f"{base_capacity}@{param_x}={vx},{param_y}={vy}"
+            rows = volume_sensitivity(
+                db_path, capacity_model=synth, delivery_domains=[domain],
+            )
+            margin, breakeven = _anchor_margin(rows)
+            cells.append({
+                "x":                vx,
+                "y":                vy,
+                "synthetic_name":   synth,
+                "viability_margin": margin,
+                "breakeven_deliveries_per_day": breakeven,
+                "state": ("never" if breakeven is None
+                          else "viable" if margin is not None and margin > 0
+                          else "beyond"),
+            })
+
+    margins = [c["viability_margin"] for c in cells
+               if c["viability_margin"] is not None]
+    return {
+        "base_capacity":   base_capacity,
+        "domain":          domain,
+        "param_x":         param_x,
+        "values_x":        list(values_x),
+        "param_y":         param_y,
+        "values_y":        list(values_y),
+        "cells":           cells,
+        "margin_max_abs":  max((abs(m) for m in margins), default=0.0),
     }

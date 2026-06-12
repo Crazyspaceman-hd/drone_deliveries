@@ -60,10 +60,36 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print all registered experiment names and exit.",
     )
+    # Phase 31: ad-hoc parameter sweep without registering an experiment.
+    parser.add_argument(
+        "--sweep",
+        metavar="DIMENSION.PARAMETER",
+        help="Ad-hoc parameter sweep, e.g. "
+             "delivery_domain.saturation_volume_per_day.  "
+             "Requires --base and --values.  Mutually exclusive with --name.",
+    )
+    parser.add_argument(
+        "--base",
+        help="Registered entry to vary (with --sweep), e.g. food_delivery.",
+    )
+    parser.add_argument(
+        "--values",
+        help="Comma-separated values to sweep (with --sweep), e.g. 1500,2500,4000.",
+    )
+    parser.add_argument(
+        "--scenarios",
+        nargs="*",
+        default=[],
+        metavar="SCENARIO",
+        help="Optional scenario filter for --sweep mode.",
+    )
     args = parser.parse_args(argv)
 
+    import dataclasses
+    from datetime import datetime, timezone
+
     from core.experiments import (
-        Experiment, ExperimentDefinition,
+        Experiment, ExperimentDefinition, ParameterSweep,
         get_experiment, list_experiments,
     )
 
@@ -77,21 +103,48 @@ def main(argv: list[str] | None = None) -> int:
             print("No experiments registered.")
         return 0
 
-    if not args.name:
-        parser.error("--name is required (or use --list to see options)")
+    if args.sweep and args.name:
+        parser.error("--sweep and --name are mutually exclusive")
 
-    defn = get_experiment(args.name)
-
-    # Override run_ids if supplied on the CLI.
-    if args.run_ids:
-        defn = ExperimentDefinition(
-            name             = defn.name,
-            run_ids          = list(args.run_ids),
-            scenarios        = defn.scenarios,
-            economic_models  = defn.economic_models,
-            delivery_domains = defn.delivery_domains,
-            scale_models     = defn.scale_models,
+    if args.sweep:
+        if not args.base or not args.values:
+            parser.error("--sweep requires --base and --values")
+        if "." not in args.sweep:
+            parser.error("--sweep must be DIMENSION.PARAMETER, "
+                         "e.g. delivery_domain.saturation_volume_per_day")
+        dimension, parameter = args.sweep.split(".", 1)
+        # Reuse the synthetic-name coercion so CLI values match what the
+        # resolver will parse back out of the snapshot names.
+        from core.parameter_sweeps import _coerce
+        values = [_coerce(v.strip()) for v in args.values.split(",") if v.strip()]
+        sweep = ParameterSweep(
+            dimension = dimension,
+            base_name = args.base,
+            parameter = parameter,
+            values    = values,
         )
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        # Capacity base belongs on the capacity axis (read-side), NOT in
+        # delivery_domains — only a delivery-domain sweep gets its base
+        # included as a baseline domain row.
+        domains = [args.base] if dimension == "delivery_domain" else ["retail_package"]
+        defn = ExperimentDefinition(
+            name             = f"_adhoc_{ts}",
+            run_ids          = list(args.run_ids or []),
+            scenarios        = list(args.scenarios),
+            economic_models  = ["suburban_standard"],
+            delivery_domains = domains,
+            scale_models     = ["pilot_program"],
+            parameter_sweeps = [sweep],
+        )
+    else:
+        if not args.name:
+            parser.error("--name or --sweep is required (or use --list)")
+        defn = get_experiment(args.name)
+        # Override run_ids if supplied — replace() preserves every other
+        # field including parameter_sweeps.
+        if args.run_ids:
+            defn = dataclasses.replace(defn, run_ids=list(args.run_ids))
 
     exp    = Experiment(defn, args.db)
     result = exp.run()

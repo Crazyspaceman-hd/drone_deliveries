@@ -234,6 +234,20 @@ def domain_value_decay(
 # Capacity-coupled (Phase 28 — primary)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def capacity_overhead_per_delivery(capacity_model, deliveries_per_day: int) -> float:
+    """Public helper: per-delivery capacity overhead for a capacity model
+    at a given total volume.  Domain-independent, no DB needed.
+
+    Used by service-mix analysis (Phase 33) to apply ONE shared fleet
+    overhead at the mix's total volume rather than per-component.
+    """
+    cm = get_capacity_model(capacity_model)
+    if deliveries_per_day <= 0:
+        return 0.0
+    return _required_capacity(cm, deliveries_per_day)["daily_capacity_overhead"] \
+        / deliveries_per_day
+
+
 def _required_capacity(cm: CapacityModel, d: int) -> dict:
     """Pure capacity arithmetic — no DB, no economics."""
     required_drones      = math.ceil(d / cm.deliveries_per_drone_per_day)
@@ -582,7 +596,24 @@ def compute_viability_summary(
     # available without a circular import through ``core.capacity_models``.
     from core.capacity_models import list_capacity_models
 
-    capacities = list(capacity_models or list_capacity_models())
+    # Phase 32 / addendum: when no explicit list is given, the axes are
+    # the registered profiles PLUS only the SINGLE most-recent what-if's
+    # synthetic variants — not every experiment ever run.  Three what-ifs
+    # in a row therefore keep the grid a fixed, readable size; only the
+    # latest one's variants appear.  ``recent_domains`` is used below to
+    # drop stale synthetic-domain cells that still live in snapshot data.
+    from core.experiments import most_recent_experiment_synthetics
+    if capacity_models:
+        capacities = list(capacity_models)
+        recent_domains = None   # caller is explicit; don't scope domains
+    else:
+        recent = most_recent_experiment_synthetics(db_path)
+        capacities = list_capacity_models() + recent["capacity_model"]
+        # Only scope synthetic domains once a sweep-bearing experiment
+        # exists.  Before any experiment, ambient synthetic domains in
+        # snapshots are shown as-is (preserves the pre-addendum contract).
+        has_recent = bool(recent["delivery_domain"] or recent["capacity_model"])
+        recent_domains = set(recent["delivery_domain"]) if has_recent else None
 
     cells: list[dict] = []
     for cm_name in capacities:
@@ -593,10 +624,17 @@ def compute_viability_summary(
             source_snapshot_run_id    = source_snapshot_run_id,
             deliveries_per_day_points = deliveries_per_day_points,
         )
-        # Group this capacity model's rows by domain.
+        # Group this capacity model's rows by domain.  When scoping is
+        # active (no explicit domain filter), drop synthetic-domain rows
+        # that aren't from the most-recent experiment — their snapshots
+        # persist forever but we only want base domains + the latest sweep.
         by_domain: dict[str, list[dict]] = {}
         for r in rows:
-            by_domain.setdefault(r["delivery_domain"], []).append(r)
+            dom = r["delivery_domain"]
+            if (recent_domains is not None and delivery_domains is None
+                    and "@" in dom and dom not in recent_domains):
+                continue
+            by_domain.setdefault(dom, []).append(r)
 
         for dom_name in sorted(by_domain.keys()):
             dom_rows = sorted(

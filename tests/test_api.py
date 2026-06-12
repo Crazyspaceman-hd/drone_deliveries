@@ -252,26 +252,56 @@ def test_viability_summary_endpoint_shape(workbench):
     r = workbench["client"].get("/analytics/viability-summary")
     assert r.status_code == 200
     body = r.json()
-    for k in ("cells", "capacity_models", "delivery_domains", "pain_points"):
+    for k in ("cells", "capacity_models", "delivery_domains",
+              "pain_points", "viability_margin_max_abs"):
         assert k in body
     assert body["capacity_models"], "capacity_models list is empty"
     if body["cells"]:
         cell = body["cells"][0]
         for k in ("capacity_model", "delivery_domain", "addressable_ceiling",
                   "breakeven_deliveries_per_day",
-                  "viable_within_addressable_demand", "state"):
+                  "viable_within_addressable_demand", "state",
+                  "viability_margin"):
             assert k in cell, f"missing cell key: {k}"
         assert cell["state"] in ("viable", "beyond", "never")
     # Pain-points block shape
     pp = body["pain_points"]
-    for k in ("diagnostics", "constraint_counts", "observations"):
+    for k in ("diagnostics", "constraint_counts", "observations",
+              "dominant_cost_counts"):
         assert k in pp
     if pp["diagnostics"]:
         d = pp["diagnostics"][0]
         for k in ("capacity_model", "delivery_domain", "state",
                   "dominant_constraint", "anchor_overhead_per_delivery",
-                  "anchor_profit_before_overhead", "gap_at_anchor"):
+                  "anchor_profit_before_overhead", "gap_at_anchor",
+                  "cost_breakdown_at_anchor", "dominant_cost_component",
+                  "dominant_cost_share"):
             assert k in d
+
+
+def test_whatif_endpoint_capacity(workbench):
+    """POST /experiments/what-if with a capacity sweep returns the
+    synthetic names and records an experiment."""
+    r = workbench["client"].post("/experiments/what-if", json={
+        "dimension": "capacity_model",
+        "base":      "pilot_capacity",
+        "parameter": "operator_to_drone_ratio",
+        "values":    [0.45, 0.30],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dimension"] == "capacity_model"
+    assert "pilot_capacity@operator_to_drone_ratio=0.45" in body["synthetic_names"]
+    assert body["experiment_name"].startswith("_whatif_")
+    assert "next_step" in body
+
+
+def test_whatif_endpoint_validates_payload(workbench):
+    r = workbench["client"].post("/experiments/what-if", json={
+        "dimension": "capacity_model", "base": "pilot_capacity",
+        # missing parameter + values
+    })
+    assert r.status_code == 422
 
 
 def test_missing_db_returns_404(tmp_path: Path):

@@ -10,9 +10,24 @@ async function get(path) {
   return res.json();
 }
 
+async function post(path, body) {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /api${path} → ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
 export const api = {
   health:             () => get('/health'),
   runs:               () => get('/runs'),
+  whatIf:             (body) => post('/experiments/what-if', body),
+  parameterGrid:      (body) => post('/analytics/parameter-grid', body),
   run:                (id) => get(`/runs/${encodeURIComponent(id)}`),
   runTransforms:      (id) => get(`/runs/${encodeURIComponent(id)}/transforms`),
   scenarios:          () => get('/scenarios'),
@@ -31,6 +46,9 @@ export const api = {
   deliveryDomains:    () => get('/analytics/delivery-domains'),
   scaleModels:        () => get('/analytics/scale-models'),
   domainScaleMatrix:  () => get('/analytics/domain-scale-matrix'),
+  serviceMixes:       (capacityModel) =>
+    get(`/analytics/service-mixes${capacityModel
+      ? `?capacity_model=${encodeURIComponent(capacityModel)}` : ''}`),
   volumeSensitivity:  (capacityModel) =>
     get(`/analytics/volume-sensitivity${capacityModel
       ? `?capacity_model=${encodeURIComponent(capacityModel)}` : ''}`),

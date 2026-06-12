@@ -81,6 +81,8 @@ CHART_FILENAMES = {
     # Phase 29 — synthetic domain volume response.  Decomposes the
     # response layered on top of Phase 28's capacity-coupled curves.
     "domain_response_components_by_volume":  "domain_response_components_by_volume.png",
+    # Phase 33 — service-mix profit curves (one line per weighted mix).
+    "service_mix_profit_by_volume":          "service_mix_profit_by_volume.png",
     # Phase 29 revision — viability grid: 3×4 colour matrix of breakeven
     # outcomes across (capacity_model × delivery_domain).  This is the
     # answer card — green/yellow/red verdict per cell.
@@ -1320,11 +1322,15 @@ def _chart_viability_by_capacity_and_domain(
 ) -> str:
     """3 × 4 viability grid — the portfolio-grade answer card.
 
-    Each cell colours one (capacity_model, delivery_domain) outcome:
-
-    * green   = breakeven volume sits within the domain's addressable demand
-    * yellow  = breakeven volume exists but only past the ceiling
-    * red     = no sweep point clears zero
+    Cells are coloured by **viability margin** — the gap_at_anchor
+    in dollars per delivery (positive = profit headroom inside the
+    addressable region; negative = loss depth even at the largest
+    sweep point within addressable demand).  A continuous diverging
+    palette (RdYlGn) keeps the green-vs-red verdict legible while
+    surfacing the underlying distribution: pilot's four reds now
+    show different shades because they fail by different amounts, and
+    regional vs dense_urban greens differ in shade because their
+    headroom isn't equal.
 
     Each cell labels the breakeven volume (or "never") plus the
     addressable ceiling so a reviewer reads "what" and "where the model
@@ -1334,7 +1340,10 @@ def _chart_viability_by_capacity_and_domain(
     """
     from core.capacity_models   import list_capacity_models
     from core.delivery_domains  import list_domains
-    from core.volume_sensitivity import compute_viability_summary, viability_state
+    from core.portfolio_summary import diagnose_viability_cells
+    from core.volume_sensitivity import compute_viability_summary
+    import matplotlib.cm     as cm_module
+    import matplotlib.colors as mcolors
     import matplotlib.patches as mpatches
 
     db_path = _db_path_from_conn(conn)
@@ -1350,46 +1359,77 @@ def _chart_viability_by_capacity_and_domain(
         ax.set_axis_off()
         return _save(fig, out_path)
 
+    # Pull the diagnostics so we can colour each cell by margin.  The
+    # diagnostics already anchor at the largest within-addressable
+    # sweep point and carry gap_at_anchor (= avg_effective_profit at
+    # that anchor).
+    diagnostics = diagnose_viability_cells(db_path) if db_path else []
+    margin_by_cell: dict[tuple, float] = {}
+    for d in diagnostics:
+        m = d.get("gap_at_anchor")
+        if m is not None:
+            margin_by_cell[(d["capacity_model"], d["delivery_domain"])] = m
+
     # Canonical orderings: pilot → regional → dense_urban (escalating
     # cost structure), domains sorted alphabetically for stability.
     natural_cap = ["pilot_capacity", "regional_capacity", "dense_urban_capacity"]
-    capacities = ([c for c in natural_cap if c in list_capacity_models()] +
+    registered = ([c for c in natural_cap if c in list_capacity_models()] +
                   [c for c in list_capacity_models() if c not in natural_cap])
-    domains = list_domains()
+    # Phase 32: append synthetic capacity variants present in the cells
+    # (from what-if experiments) after the registered capacities.
+    synthetic_caps = sorted({c["capacity_model"] for c in cells} - set(registered))
+    capacities = registered + synthetic_caps
+    # Phase 31: include synthetic parameter-sweep variants present in
+    # the cells alongside the registered domains.
+    domains = sorted(
+        set(list_domains()) | {c["delivery_domain"] for c in cells}
+    )
     by_cell = {(c["capacity_model"], c["delivery_domain"]): c for c in cells}
 
-    STATE_COLOUR = {
-        "viable": "#c8e6c9",   # soft green
-        "beyond": "#fff59d",   # soft yellow
-        "never":  "#ffcdd2",   # soft red
-    }
+    # Build a symmetric diverging norm around 0 so positive and
+    # negative gaps map onto opposite sides of the palette regardless
+    # of which side has the larger absolute magnitude.  Falls back to
+    # ±1 if every margin is zero (degenerate).
+    max_abs = max((abs(v) for v in margin_by_cell.values()), default=1.0) or 1.0
+    norm    = mcolors.TwoSlopeNorm(vmin=-max_abs, vcenter=0.0, vmax=max_abs)
+    cmap    = cm_module.get_cmap("RdYlGn")
+
+    def _colour_for(cell_key) -> str:
+        m = margin_by_cell.get(cell_key)
+        if m is None:
+            return "#eeeeee"
+        return mcolors.to_hex(cmap(norm(m)))
 
     nrows = len(capacities)
     ncols = len(domains)
     for ci, cap in enumerate(capacities):
         for di, dom in enumerate(domains):
             r = by_cell.get((cap, dom))
-            # Cells run top-to-bottom in chart order so row 0 = first
-            # capacity (pilot) at the top.
-            y = nrows - 1 - ci
+            y = nrows - 1 - ci    # top-to-bottom
             if r is None:
                 colour = "#eeeeee"
                 label  = "—"
             else:
-                colour = STATE_COLOUR[viability_state(r)]
+                colour = _colour_for((cap, dom))
                 be     = r["breakeven_deliveries_per_day"]
                 ceil_  = r["addressable_ceiling"]
+                margin = margin_by_cell.get((cap, dom))
                 if be is None:
                     label = f"never\n(ceiling {ceil_}/day)"
                 elif be <= ceil_:
                     label = f"≥ {be}/day\n(ceiling {ceil_}/day)"
                 else:
                     label = f"breakeven {be}/day\n(beyond ceiling {ceil_}/day)"
+                # Append the dollar margin so the colour gradient is
+                # quantitatively anchored.
+                if margin is not None:
+                    sign = "+" if margin >= 0 else ""
+                    label += f"\n{sign}${margin:.2f}/del."
             ax.add_patch(plt.Rectangle(
                 (di, y), 1, 1, facecolor=colour, edgecolor="gray", linewidth=0.8,
             ))
             ax.text(di + 0.5, y + 0.5, label,
-                    ha="center", va="center", fontsize=9)
+                    ha="center", va="center", fontsize=8.5)
 
     ax.set_xlim(0, ncols)
     ax.set_ylim(0, nrows)
@@ -1402,21 +1442,87 @@ def _chart_viability_by_capacity_and_domain(
         spine.set_visible(False)
     ax.set_aspect("auto")
 
-    # Legend.
-    handles = [
-        mpatches.Patch(color=STATE_COLOUR["viable"], label="viable within addressable demand"),
-        mpatches.Patch(color=STATE_COLOUR["beyond"], label="breakeven beyond addressable demand"),
-        mpatches.Patch(color=STATE_COLOUR["never"],  label="no breakeven in sweep"),
-    ]
-    ax.legend(handles=handles, loc="upper center",
-              bbox_to_anchor=(0.5, -0.08), ncol=3, frameon=False, fontsize=9)
+    # Colourbar legend — shows the continuous margin scale rather than
+    # three categorical patches.  Cells past addressable demand are
+    # still labelled "beyond ceiling" textually; the colour for those
+    # cells reflects margin at the anchor (within addressable demand),
+    # which is the only honest read.
+    sm = cm_module.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation="horizontal",
+                        fraction=0.08, pad=0.18, aspect=40)
+    cbar.set_label("viability margin = gap at addressable anchor "
+                   "($/delivery; negative = loss depth)", fontsize=9)
+    cbar.ax.tick_params(labelsize=8)
 
     ax.set_title(
         "Viability by (capacity model × delivery domain)\n"
-        "Synthetic comparative model — does the formula find breakeven, "
-        "and is it within addressable demand?",
+        "Synthetic comparative model — colour intensity reflects "
+        "dollars-per-delivery margin at the addressable-demand anchor.",
         fontsize=11,
     )
+    fig.tight_layout()
+    return _save(fig, out_path)
+
+
+def _chart_service_mix_profit_by_volume(
+    conn: sqlite3.Connection, out_path: str,
+) -> str:
+    """One line per service mix: avg effective profit vs total volume,
+    at the default capacity model.  Log x, zero line.  Dashed past the
+    point where any component exceeds its addressable demand (Phase 33).
+    """
+    from core.service_mix_analysis import compute_service_mix_summary
+    from core.volume_sensitivity import DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY
+
+    db_path = _db_path_from_conn(conn)
+    rows = compute_service_mix_summary(db_path) if db_path else []
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    if not rows:
+        ax.text(0.5, 0.5,
+                "no economics snapshots for the mix component domains —\n"
+                "run `python run_transforms.py --all-runs --all-delivery-domains`.",
+                ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return _save(fig, out_path)
+
+    by_mix: dict = {}
+    for r in rows:
+        by_mix.setdefault(r["service_mix_name"], []).append(
+            (r["deliveries_per_day"], r["avg_effective_profit"],
+             r["within_addressable_demand"])
+        )
+
+    colour_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+    for i, mix in enumerate(sorted(by_mix.keys())):
+        colour = colour_cycle[i % len(colour_cycle)]
+        series = sorted(by_mix[mix])
+        within = [(d, v) for d, v, w in series if w]
+        beyond = [(d, v) for d, v, w in series if not w]
+        if within:
+            ax.plot([d for d, _ in within], [v for _, v in within],
+                    marker="o", color=colour, linewidth=1.3, markersize=4,
+                    label=mix)
+        if beyond:
+            # bridge: prepend last within point
+            seg = ([within[-1]] if within else []) + beyond
+            ax.plot([d for d, _ in seg], [v for _, v in seg],
+                    marker="o", color=colour, linewidth=1.0, markersize=3,
+                    linestyle="--", alpha=0.5)
+
+    ax.axhline(0, color="black", linewidth=0.6)
+    ax.set_xscale("log")
+    ax.set_xlabel("total deliveries per day (log scale)")
+    ax.set_ylabel("avg effective profit per delivery (USD, synthetic)")
+    ax.set_title(
+        f"Service-mix effective profit by volume\n"
+        f"capacity: {DEFAULT_CAPACITY_MODEL_FOR_SENSITIVITY}  ·  "
+        f"split-volume weighted portfolios  ·  "
+        f"dashed = a component past addressable demand"
+    )
+    ax.grid(True, which="both", linewidth=0.3, alpha=0.5)
+    ax.legend(fontsize=8, loc="best")
     fig.tight_layout()
     return _save(fig, out_path)
 
@@ -1461,6 +1567,7 @@ def generate_charts(
         "capacity_coupled_profit_by_volume":     _chart_capacity_coupled_profit_by_volume,
         "required_drones_by_delivery_volume":    _chart_required_drones_by_delivery_volume,
         "domain_response_components_by_volume":  _chart_domain_response_components_by_volume,
+        "service_mix_profit_by_volume":          _chart_service_mix_profit_by_volume,
         "viability_by_capacity_and_domain":      _chart_viability_by_capacity_and_domain,
     }
 

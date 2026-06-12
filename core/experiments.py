@@ -32,16 +32,95 @@ Layering rule reminder
 
 from __future__ import annotations
 
+import dataclasses as _dc
 import json
 import sqlite3
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from core.capacity_models import get_capacity_model
 from core.delivery_domains import get_domain, list_domains
 from core.economic_models import get_economic_model, list_economic_models
 from core.scale_models import get_scale_model, list_scale_models
+
+
+# Dimensions for which parameter sweeps are supported.
+#
+# ``delivery_domain`` (Phase 31) is *write-side*: the synthetic name
+# lands in ``trip_economics_snapshots.domain_name`` and the viability
+# readers discover it via ``SELECT DISTINCT domain_name``.
+#
+# ``capacity_model`` (Phase 32) is *read-side*: capacity is never
+# persisted to a snapshot table — ``volume_sensitivity`` applies the
+# CapacityModel cost structure in-memory at read time.  So a capacity
+# sweep writes NO new snapshots; instead its synthetic names are
+# recorded in the ``experiment_runs`` definition and discovered from
+# there by ``discover_synthetic_capacities()``.  See that helper and
+# the Phase 32 notes in the README for the full rationale.
+SWEEP_DIMENSIONS = frozenset({"delivery_domain", "capacity_model"})
+
+
+@dataclass(frozen=True)
+class ParameterSweep:
+    """Single-parameter sweep over a registered entry.
+
+    Generates synthetic names of the form
+    ``base_name@parameter=v1``, ``base_name@parameter=v2``, … which the
+    resolvers in ``core/delivery_domains.py`` (and future
+    ``core/capacity_models.py``) resolve transparently.
+
+    Fields:
+        dimension:  ``'delivery_domain'``.  Only this is supported in
+                    Phase 31.  ``'capacity_model'`` is reserved for a
+                    follow-up phase (see SWEEP_DIMENSIONS docstring).
+        base_name:  registered entry to vary.  Must resolve via the
+                    normal registry getter at construction time.
+        parameter:  field name on the base dataclass.  Validated at
+                    construction time so typos fail loud.
+        values:     non-empty list of override values.  Each generates
+                    one synthetic variant.
+    """
+    dimension: str
+    base_name: str
+    parameter: str
+    values:    list
+
+    def __post_init__(self) -> None:
+        if self.dimension not in SWEEP_DIMENSIONS:
+            raise ValueError(
+                f"ParameterSweep.dimension={self.dimension!r} is not yet "
+                f"supported; valid choices: {sorted(SWEEP_DIMENSIONS)}"
+            )
+        if not isinstance(self.values, list) or not self.values:
+            raise ValueError(
+                "ParameterSweep.values must be a non-empty list, got "
+                f"{self.values!r}"
+            )
+        # Resolve base; verify the parameter is a real field on the dataclass.
+        if self.dimension == "delivery_domain":
+            base = get_domain(self.base_name)         # raises KeyError if unknown
+        elif self.dimension == "capacity_model":
+            base = get_capacity_model(self.base_name)  # raises KeyError if unknown
+        else:  # pragma: no cover — gate above prevents this
+            raise ValueError(f"unreachable: dimension={self.dimension}")
+        field_names = {f.name for f in _dc.fields(base)}
+        if self.parameter not in field_names:
+            raise KeyError(
+                f"ParameterSweep.parameter={self.parameter!r} is not a field "
+                f"of {type(base).__name__}; valid fields: "
+                f"{sorted(field_names)}"
+            )
+
+    def synthetic_names(self) -> list[str]:
+        """Generate the synthetic-name list this sweep expands into."""
+        return [f"{self.base_name}@{self.parameter}={v}" for v in self.values]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ExperimentDefinition
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,19 +168,150 @@ class ExperimentDefinition:
     economic_models:  list   # list[str]
     delivery_domains: list   # list[str]
     scale_models:     list   # list[str]
+    # Phase 31: optional parameter sweeps.  Each entry expands its
+    # dimension's axis with synthetic names at run time — appended to
+    # the explicit list, never replacing it.  Include the base name in
+    # the dimension list yourself if you want a comparison-against-base
+    # row.
+    parameter_sweeps: list = field(default_factory=list)  # list[ParameterSweep]
 
     def __post_init__(self) -> None:
-        for field in ("run_ids", "scenarios", "economic_models",
-                      "delivery_domains", "scale_models"):
-            val = getattr(self, field)
+        for fname in ("run_ids", "scenarios", "economic_models",
+                      "delivery_domains", "scale_models",
+                      "parameter_sweeps"):
+            val = getattr(self, fname)
             if not isinstance(val, list):
                 raise TypeError(
-                    f"ExperimentDefinition.{field} must be a list, "
+                    f"ExperimentDefinition.{fname} must be a list, "
                     f"got {type(val).__name__!r}"
+                )
+        for sweep in self.parameter_sweeps:
+            if not isinstance(sweep, ParameterSweep):
+                raise TypeError(
+                    "ExperimentDefinition.parameter_sweeps entries must be "
+                    f"ParameterSweep instances, got {type(sweep).__name__!r}"
                 )
 
     def to_dict(self) -> dict:
+        # asdict recurses into nested ParameterSweep dataclasses,
+        # producing plain dicts — JSON-safe for definition_json.
         return asdict(self)
+
+
+def definition_from_dict(payload: dict) -> ExperimentDefinition:
+    """Reconstruct an ExperimentDefinition from its ``to_dict`` output.
+
+    Counterpart of ``to_dict`` for round-trips through
+    ``experiment_runs.definition_json`` — re-hydrates the
+    ``parameter_sweeps`` entries back into ParameterSweep objects
+    (asdict flattened them to plain dicts on the way in).
+    """
+    data = dict(payload)
+    sweeps = [
+        s if isinstance(s, ParameterSweep) else ParameterSweep(**s)
+        for s in data.get("parameter_sweeps", [])
+    ]
+    data["parameter_sweeps"] = sweeps
+    return ExperimentDefinition(**data)
+
+
+def discover_synthetic_capacities(db_path: str) -> list[str]:
+    """Synthetic capacity-model names referenced by any experiment in the DB.
+
+    Capacity sweeps are *read-side* — they don't write snapshot rows — so
+    the viability readers can't find their synthetic names via
+    ``SELECT DISTINCT`` on a data column.  Instead, every capacity what-if
+    records its synthetic names in the ``experiment_runs`` definition;
+    this helper scans those definitions and returns the union of all
+    ``capacity_model`` sweep variants, so the read path can render them
+    alongside the registered capacities.
+
+    Returns a sorted list.  Empty (and never raises) if the table is
+    missing or no capacity sweeps have run.
+    """
+    names: set[str] = set()
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.OperationalError:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT definition_json FROM experiment_runs "
+            " WHERE definition_json IS NOT NULL"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+
+    for (defn_json,) in rows:
+        try:
+            payload = json.loads(defn_json)
+        except (TypeError, ValueError):
+            continue
+        for sweep in payload.get("parameter_sweeps", []):
+            if not isinstance(sweep, dict):
+                continue
+            if sweep.get("dimension") != "capacity_model":
+                continue
+            base = sweep.get("base_name")
+            param = sweep.get("parameter")
+            for v in sweep.get("values", []):
+                if base and param:
+                    names.add(f"{base}@{param}={v}")
+    return sorted(names)
+
+
+def most_recent_experiment_synthetics(db_path: str) -> dict:
+    """Synthetic names from the SINGLE most-recent experiment that carries
+    parameter sweeps.
+
+    Returns ``{"delivery_domain": [...], "capacity_model": [...]}`` (empty
+    lists if no sweep-bearing experiment exists).
+
+    This is the scoping the viability grid uses: base registered profiles
+    plus only the latest what-if's variants, rather than accumulating
+    every synthetic name from every experiment ever run.  Run three
+    what-ifs and only the third's variants appear — the grid stays a
+    fixed, readable size.
+    """
+    out: dict = {"delivery_domain": [], "capacity_model": []}
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.OperationalError:
+        return out
+    try:
+        rows = conn.execute(
+            "SELECT definition_json FROM experiment_runs "
+            " WHERE definition_json IS NOT NULL "
+            " ORDER BY started_at DESC, experiment_run_id DESC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return out
+    finally:
+        conn.close()
+
+    for (defn_json,) in rows:
+        try:
+            payload = json.loads(defn_json)
+        except (TypeError, ValueError):
+            continue
+        sweeps = payload.get("parameter_sweeps") or []
+        if not sweeps:
+            continue
+        # First sweep-bearing row in DESC order is the most recent.
+        for sweep in sweeps:
+            if not isinstance(sweep, dict):
+                continue
+            dim = sweep.get("dimension")
+            base = sweep.get("base_name")
+            param = sweep.get("parameter")
+            if dim not in out or not base or not param:
+                continue
+            for v in sweep.get("values", []):
+                out[dim].append(f"{base}@{param}={v}")
+        return out
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +362,14 @@ class Experiment:
             model_names  = self._defn.economic_models  or list_economic_models()
             domain_names = self._defn.delivery_domains or list_domains()
             scale_names  = self._defn.scale_models     or list_scale_models()
+
+            # Phase 31: parameter sweeps append synthetic names to their
+            # dimension's axis.  Append-only — the explicit list above is
+            # never replaced, and the base name is NOT implicitly added;
+            # include it in delivery_domains yourself for a baseline row.
+            for sweep in self._defn.parameter_sweeps:
+                if sweep.dimension == "delivery_domain":
+                    domain_names = list(domain_names) + sweep.synthetic_names()
 
             # Validate all dimension values BEFORE running any transforms so a
             # typo in one name causes an immediate, clean failure rather than a
@@ -408,4 +626,44 @@ register_experiment(ExperimentDefinition(
     economic_models  = [],
     delivery_domains = [],
     scale_models     = [],
+))
+
+# Phase 31: built-in parameter sweep.  How sensitive is food_delivery's
+# viability to its addressable-demand ceiling?  The base (4000) is
+# included explicitly in delivery_domains for a comparison row; the
+# sweep appends three synthetic variants.
+register_experiment(ExperimentDefinition(
+    name             = "food_saturation_sensitivity",
+    run_ids          = [],
+    scenarios        = [],
+    economic_models  = ["suburban_standard"],
+    delivery_domains = ["food_delivery"],
+    scale_models     = ["pilot_program"],
+    parameter_sweeps = [ParameterSweep(
+        dimension = "delivery_domain",
+        base_name = "food_delivery",
+        parameter = "saturation_volume_per_day",
+        values    = [1500, 2500, 5500],
+    )],
+))
+
+# Phase 32: built-in capacity sweep.  At what operator-to-drone ratio
+# does pilot_capacity stop being uniformly red?  Capacity sweeps are
+# read-side: this experiment records the synthetic capacity names in its
+# definition (no new snapshots) and the viability readers discover them
+# via ``discover_synthetic_capacities``.  Illustrative values, not tuned
+# to force viability.
+register_experiment(ExperimentDefinition(
+    name             = "pilot_operator_ratio_sensitivity",
+    run_ids          = [],
+    scenarios        = [],
+    economic_models  = ["suburban_standard"],
+    delivery_domains = ["retail_package"],
+    scale_models     = ["pilot_program"],
+    parameter_sweeps = [ParameterSweep(
+        dimension = "capacity_model",
+        base_name = "pilot_capacity",
+        parameter = "operator_to_drone_ratio",
+        values    = [0.60, 0.45, 0.30, 0.20],
+    )],
 ))

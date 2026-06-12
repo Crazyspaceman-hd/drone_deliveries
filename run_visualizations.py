@@ -25,7 +25,10 @@ from core.visualizations import generate_charts
 # Charts the README + docs embed directly.  Copied to ``docs/img/``
 # alongside the main render so the tracked-path reference resolves on
 # GitHub without poking a hole in the ``outputs/`` gitignore rule.
-PUBLISHED_CHARTS = ("viability_by_capacity_and_domain",)
+PUBLISHED_CHARTS = (
+    "viability_by_capacity_and_domain",
+    "service_mix_profit_by_volume",
+)
 PUBLISH_DIR      = Path(__file__).resolve().parent / "docs" / "img"
 
 

@@ -170,13 +170,37 @@ def list_capacity_models() -> list[str]:
 
 def get_capacity_model(name_or_obj: Union[str, CapacityModel, None]) -> CapacityModel:
     """Resolve a capacity model by name, pass through a CapacityModel,
-    or fall back to the default profile."""
+    or fall back to the default profile.
+
+    Phase 31: also resolves *synthetic* names of the form
+    ``base_name@field=value[,field2=value2]``.
+    """
     if name_or_obj is None:
         return _CAPACITY_MODELS[DEFAULT_CAPACITY_MODEL_NAME]
     if isinstance(name_or_obj, CapacityModel):
         return name_or_obj
+    from core.parameter_sweeps import (
+        SEPARATOR, apply_overrides, parse_synthetic_name,
+    )
+    if SEPARATOR in name_or_obj:
+        base_name, overrides = parse_synthetic_name(name_or_obj)
+        try:
+            base = _CAPACITY_MODELS[base_name]
+        except KeyError:
+            known = ", ".join(list_capacity_models())
+            raise KeyError(
+                f"unknown capacity_model base {base_name!r} (from {name_or_obj!r}); "
+                f"known: {known}"
+            )
+        return apply_overrides(base, overrides, synthetic_name=name_or_obj)
     try:
         return _CAPACITY_MODELS[name_or_obj]
     except KeyError:
         known = ", ".join(list_capacity_models())
         raise KeyError(f"unknown capacity_model {name_or_obj!r}; known: {known}")
+
+
+# Phase 31 invariant: registered names cannot contain the synthetic-name
+# separator (``@``).
+from core.parameter_sweeps import assert_no_reserved_chars as _assert_no_reserved
+_assert_no_reserved(list(_CAPACITY_MODELS.keys()), "_CAPACITY_MODELS")
