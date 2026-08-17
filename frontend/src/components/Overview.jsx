@@ -30,7 +30,7 @@ export function Overview() {
         <p>
           Drone delivery economics depend on three coupled assumptions:
           how productive each drone is, how much demand the domain can
-          address, and how overhead amortises across the volume served.
+          address, and how overhead amortizes across the volume served.
           This project models all three as <em>synthetic comparative</em>
           knobs and asks a single question per cell: <em>at what delivery
           volume does the model find break-even, and does that volume sit

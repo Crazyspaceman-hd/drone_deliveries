@@ -46,17 +46,18 @@ SCALE_MODEL_REGISTRY_VERSION = "v1"
 
 
 # Default = smallest, closest to "barely any amortization yet".  Picked
-# so the auto-pipeline's default behaviour is recognisably similar to
+# so the auto-pipeline's default behavior is recognizably similar to
 # pre-Phase-23 (operational cost dominates; overhead is small but
 # present).
 DEFAULT_SCALE_MODEL_NAME = "pilot_program"
 
 
-# Synthetic daily-cost constants for staff.  Visible at top of file
-# alongside the profile knobs so retuning is one place.  These are
-# project-internal — not pulled from any external dataset.
-OPERATOR_DAILY_USD    = 240.0   # ~8 hours × $30/hr (synthetic)
-MAINTENANCE_DAILY_USD = 280.0   # slightly higher to reflect parts/tools
+# Synthetic daily-cost constants for staff.  Single source of truth now
+# lives in ``core/labor_costs.py`` so this registry and the Phase 28
+# CapacityModel registry cannot silently desync when a rate is retuned.
+# Re-exported here so existing ``scale_models.OPERATOR_DAILY_USD``
+# references keep working.
+from core.labor_costs import OPERATOR_DAILY_USD, MAINTENANCE_DAILY_USD
 
 
 @dataclass(frozen=True)

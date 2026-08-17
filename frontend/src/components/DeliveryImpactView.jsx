@@ -18,14 +18,14 @@ export function DeliveryImpactView() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
     setLoading(true);
     setError(null);
     api.displacement(truckCost)
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((e) => { if (!cancelled) setError(e.message || String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .then((d) => { if (!canceled) setData(d); })
+      .catch((e) => { if (!canceled) setError(e.message || String(e)); })
+      .finally(() => { if (!canceled) setLoading(false); });
+    return () => { canceled = true; };
   }, [truckCost]);
 
   if (loading) return <div className="panel muted">Computing displacement…</div>;

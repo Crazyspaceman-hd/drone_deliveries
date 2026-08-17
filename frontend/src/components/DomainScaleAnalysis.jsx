@@ -225,7 +225,7 @@ python run_transforms.py --all-runs --all-scale-models`}</pre>
       <h2 className="section-title">Domain × Scale matrix</h2>
       <p className="muted">
         Each cell is the average effective profit per trip for one
-        (scenario, domain, scale) triple — best-case minus amortised
+        (scenario, domain, scale) triple — best-case minus amortized
         overhead.  Pick a scenario:
       </p>
       <div className="scenario-tabs">

@@ -96,7 +96,7 @@ def test_get_domain_resolves_synthetic_name():
     assert d.volume_value_decay_rate == get_domain("food_delivery").volume_value_decay_rate
 
 
-def test_get_domain_plain_name_behaviour_unchanged():
+def test_get_domain_plain_name_behavior_unchanged():
     assert get_domain("food_delivery").saturation_volume_per_day == 4000
     with pytest.raises(KeyError):
         get_domain("food_deliveryy")   # misspell still strict

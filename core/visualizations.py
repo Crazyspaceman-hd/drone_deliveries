@@ -83,7 +83,7 @@ CHART_FILENAMES = {
     "domain_response_components_by_volume":  "domain_response_components_by_volume.png",
     # Phase 33 — service-mix profit curves (one line per weighted mix).
     "service_mix_profit_by_volume":          "service_mix_profit_by_volume.png",
-    # Phase 29 revision — viability grid: 3×4 colour matrix of breakeven
+    # Phase 29 revision — viability grid: 3×4 color matrix of breakeven
     # outcomes across (capacity_model × delivery_domain).  This is the
     # answer card — green/yellow/red verdict per cell.
     "viability_by_capacity_and_domain":      "viability_by_capacity_and_domain.png",
@@ -114,6 +114,33 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _style(ax, *, title=None, xlabel=None, ylabel=None, rotate_x=None) -> None:
+    """Apply the common title/axis-label/rotation styling shared by charts."""
+    if title is not None:
+        ax.set_title(title)
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    if rotate_x is not None:
+        ax.tick_params(axis="x", rotation=rotate_x)
+        for tick in ax.get_xticklabels():
+            tick.set_ha("right")
+
+
+def _bar_chart(out_path, labels, values, *, title, xlabel=None, ylabel=None,
+               color="steelblue", figsize=(7, 4), rotate_x=None) -> str:
+    """Render a single-series bar chart end to end (fig → bar → style → save).
+
+    *color* may be one color or a per-bar list, matching matplotlib's
+    ``ax.bar`` semantics.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.bar(labels, values, color=color)
+    _style(ax, title=title, xlabel=xlabel, ylabel=ylabel, rotate_x=rotate_x)
+    return _save(fig, out_path)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Individual chart builders
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,15 +153,9 @@ def _chart_event_counts(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.bar(labels, counts, color="steelblue")
-    ax.set_title("Drone Delivery Events by Type")
-    ax.set_xlabel("event_type")
-    ax.set_ylabel("count")
-    ax.tick_params(axis="x", rotation=35)
-    for tick in ax.get_xticklabels():
-        tick.set_ha("right")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(9, 5), color="steelblue",
+                      title="Drone Delivery Events by Type",
+                      xlabel="event_type", ylabel="count", rotate_x=35)
 
 
 def _chart_trip_outcomes(conn: sqlite3.Connection, out_path: str) -> str:
@@ -144,14 +165,10 @@ def _chart_trip_outcomes(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(6, 4))
     colors = ["seagreen" if l == "completed" else "indianred" if l == "aborted"
               else "slategray" for l in labels]
-    ax.bar(labels, counts, color=colors)
-    ax.set_title("Trip Outcomes")
-    ax.set_xlabel("status")
-    ax.set_ylabel("count")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(6, 4), color=colors,
+                      title="Trip Outcomes", xlabel="status", ylabel="count")
 
 
 def _chart_drone_utilization(conn: sqlite3.Connection, out_path: str) -> str:
@@ -161,12 +178,9 @@ def _chart_drone_utilization(conn: sqlite3.Connection, out_path: str) -> str:
     labels = [r[0] for r in rows]
     counts = [r[1] for r in rows]
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.bar(labels, counts, color="darkorange")
-    ax.set_title("Trips Flown by Drone")
-    ax.set_xlabel("drone_id")
-    ax.set_ylabel("trips_flown")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, labels, counts, figsize=(7, 4), color="darkorange",
+                      title="Trips Flown by Drone",
+                      xlabel="drone_id", ylabel="trips_flown")
 
 
 def _chart_battery_warnings(conn: sqlite3.Connection, out_path: str) -> str:
@@ -182,12 +196,9 @@ def _chart_battery_warnings(conn: sqlite3.Connection, out_path: str) -> str:
     ))
     counts = [warning_counts.get(d, 0) for d in drones]
 
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.bar(drones, counts, color="crimson")
-    ax.set_title("Battery Warnings by Drone")
-    ax.set_xlabel("drone_id")
-    ax.set_ylabel("battery_warning events")
-    return _save(fig, out_path)
+    return _bar_chart(out_path, drones, counts, figsize=(7, 4), color="crimson",
+                      title="Battery Warnings by Drone",
+                      xlabel="drone_id", ylabel="battery_warning events")
 
 
 def _chart_battery_over_time(conn: sqlite3.Connection, out_path: str) -> str:
@@ -303,7 +314,7 @@ def _chart_scenario_profitability(conn: sqlite3.Connection, out_path: str) -> st
 
 
 def _chart_scenario_feasibility(conn: sqlite3.Connection, out_path: str) -> str:
-    """Bar chart: rule-based feasibility score per scenario, coloured by label."""
+    """Bar chart: rule-based feasibility score per scenario, colored by label."""
     # Local import to avoid an import-cycle from a project standpoint and to
     # keep business_intelligence.py free of matplotlib at module load.
     from core.business_intelligence import (
@@ -1087,16 +1098,16 @@ def _chart_capacity_coupled_profit_by_volume(
             ax.set_axis_off()
         return _save(fig, out_path)
 
-    # Pull the colour cycle once so each domain keeps its colour across
+    # Pull the color cycle once so each domain keeps its color across
     # all three panels.
-    colour_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
-    # Stable domain → colour mapping (sorted so it's deterministic).
+    color_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+    # Stable domain → color mapping (sorted so it's deterministic).
     all_domains = sorted({
         r["delivery_domain"]
         for rows in rows_by_cap.values() for r in rows
     })
-    domain_colour = {
-        d: colour_cycle[i % len(colour_cycle)]
+    domain_color = {
+        d: color_cycle[i % len(color_cycle)]
         for i, d in enumerate(all_domains)
     }
 
@@ -1117,19 +1128,19 @@ def _chart_capacity_coupled_profit_by_volume(
             ))
 
         for domain in sorted(by_domain.keys()):
-            colour = domain_colour[domain]
+            color = domain_color[domain]
             series = sorted(by_domain[domain])
             within, beyond = _split_within_beyond(series)
             if within:
                 xs = [t[0] for t in within]
                 ys = [t[1] for t in within]
-                ax.plot(xs, ys, marker="o", label=domain, color=colour,
+                ax.plot(xs, ys, marker="o", label=domain, color=color,
                         linewidth=1.1, alpha=0.55, markersize=5,
                         markeredgewidth=1.2, drawstyle="steps-post")
             if beyond:
                 xs = [t[0] for t in beyond]
                 ys = [t[1] for t in beyond]
-                ax.plot(xs, ys, marker="o", color=colour,
+                ax.plot(xs, ys, marker="o", color=color,
                         linewidth=1.0, alpha=0.35, markersize=4,
                         drawstyle="steps-post", linestyle="--")
 
@@ -1144,7 +1155,7 @@ def _chart_capacity_coupled_profit_by_volume(
     axes_flat[0].set_ylabel("avg effective profit per trip (USD)")
     # Build a stable legend across all panels.
     handles = [
-        plt.Line2D([], [], color=domain_colour[d], marker="o",
+        plt.Line2D([], [], color=domain_color[d], marker="o",
                    linewidth=1.4, label=d)
         for d in all_domains
     ]
@@ -1217,7 +1228,7 @@ def _chart_domain_response_components_by_volume(
     axes_flat = axes.flat
 
     line_specs = [
-        # (column index, label, colour)
+        # (column index, label, color)
         (1, "efficiency credit (+)", "seagreen"),
         (2, "value decay (−)",       "indianred"),
         (3, "net response",          "steelblue"),
@@ -1226,7 +1237,7 @@ def _chart_domain_response_components_by_volume(
     for ax, dom_name in zip(axes_flat, domains):
         series = sorted(by_domain[dom_name])
 
-        for col, label, colour in line_specs:
+        for col, label, color in line_specs:
             # Build a per-line (d, y, within) view for the splitter.
             line_series = [(s[0], s[col], s[-1]) for s in series]
             within, beyond = _split_within_beyond(line_series)
@@ -1236,12 +1247,12 @@ def _chart_domain_response_components_by_volume(
                 ys = [t[1] for t in within]
                 ax.plot(xs, ys, marker="o", linewidth=1.1, alpha=0.65,
                         markersize=4, markeredgewidth=1.0,
-                        label=label, color=colour)
+                        label=label, color=color)
             if beyond:
                 xs = [t[0] for t in beyond]
                 ys = [t[1] for t in beyond]
                 ax.plot(xs, ys, marker="o", linewidth=0.9, alpha=0.35,
-                        markersize=3, linestyle="--", color=colour)
+                        markersize=3, linestyle="--", color=color)
 
         ax.axhline(0, color="black", linewidth=0.5)
         ax.set_xscale("log")
@@ -1322,7 +1333,7 @@ def _chart_viability_by_capacity_and_domain(
 ) -> str:
     """3 × 4 viability grid — the portfolio-grade answer card.
 
-    Cells are coloured by **viability margin** — the gap_at_anchor
+    Cells are colored by **viability margin** — the gap_at_anchor
     in dollars per delivery (positive = profit headroom inside the
     addressable region; negative = loss depth even at the largest
     sweep point within addressable demand).  A continuous diverging
@@ -1359,7 +1370,7 @@ def _chart_viability_by_capacity_and_domain(
         ax.set_axis_off()
         return _save(fig, out_path)
 
-    # Pull the diagnostics so we can colour each cell by margin.  The
+    # Pull the diagnostics so we can color each cell by margin.  The
     # diagnostics already anchor at the largest within-addressable
     # sweep point and carry gap_at_anchor (= avg_effective_profit at
     # that anchor).
@@ -1392,9 +1403,9 @@ def _chart_viability_by_capacity_and_domain(
     # ±1 if every margin is zero (degenerate).
     max_abs = max((abs(v) for v in margin_by_cell.values()), default=1.0) or 1.0
     norm    = mcolors.TwoSlopeNorm(vmin=-max_abs, vcenter=0.0, vmax=max_abs)
-    cmap    = cm_module.get_cmap("RdYlGn")
+    cmap    = matplotlib.colormaps["RdYlGn"]
 
-    def _colour_for(cell_key) -> str:
+    def _color_for(cell_key) -> str:
         m = margin_by_cell.get(cell_key)
         if m is None:
             return "#eeeeee"
@@ -1407,10 +1418,10 @@ def _chart_viability_by_capacity_and_domain(
             r = by_cell.get((cap, dom))
             y = nrows - 1 - ci    # top-to-bottom
             if r is None:
-                colour = "#eeeeee"
+                color = "#eeeeee"
                 label  = "—"
             else:
-                colour = _colour_for((cap, dom))
+                color = _color_for((cap, dom))
                 be     = r["breakeven_deliveries_per_day"]
                 ceil_  = r["addressable_ceiling"]
                 margin = margin_by_cell.get((cap, dom))
@@ -1420,13 +1431,13 @@ def _chart_viability_by_capacity_and_domain(
                     label = f"≥ {be}/day\n(ceiling {ceil_}/day)"
                 else:
                     label = f"breakeven {be}/day\n(beyond ceiling {ceil_}/day)"
-                # Append the dollar margin so the colour gradient is
+                # Append the dollar margin so the color gradient is
                 # quantitatively anchored.
                 if margin is not None:
                     sign = "+" if margin >= 0 else ""
                     label += f"\n{sign}${margin:.2f}/del."
             ax.add_patch(plt.Rectangle(
-                (di, y), 1, 1, facecolor=colour, edgecolor="gray", linewidth=0.8,
+                (di, y), 1, 1, facecolor=color, edgecolor="gray", linewidth=0.8,
             ))
             ax.text(di + 0.5, y + 0.5, label,
                     ha="center", va="center", fontsize=8.5)
@@ -1442,9 +1453,9 @@ def _chart_viability_by_capacity_and_domain(
         spine.set_visible(False)
     ax.set_aspect("auto")
 
-    # Colourbar legend — shows the continuous margin scale rather than
+    # Colorbar legend — shows the continuous margin scale rather than
     # three categorical patches.  Cells past addressable demand are
-    # still labelled "beyond ceiling" textually; the colour for those
+    # still labelled "beyond ceiling" textually; the color for those
     # cells reflects margin at the anchor (within addressable demand),
     # which is the only honest read.
     sm = cm_module.ScalarMappable(cmap=cmap, norm=norm)
@@ -1457,7 +1468,7 @@ def _chart_viability_by_capacity_and_domain(
 
     ax.set_title(
         "Viability by (capacity model × delivery domain)\n"
-        "Synthetic comparative model — colour intensity reflects "
+        "Synthetic comparative model — color intensity reflects "
         "dollars-per-delivery margin at the addressable-demand anchor.",
         fontsize=11,
     )
@@ -1494,21 +1505,21 @@ def _chart_service_mix_profit_by_volume(
              r["within_addressable_demand"])
         )
 
-    colour_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
+    color_cycle = list(plt.rcParams["axes.prop_cycle"].by_key()["color"])
     for i, mix in enumerate(sorted(by_mix.keys())):
-        colour = colour_cycle[i % len(colour_cycle)]
+        color = color_cycle[i % len(color_cycle)]
         series = sorted(by_mix[mix])
         within = [(d, v) for d, v, w in series if w]
         beyond = [(d, v) for d, v, w in series if not w]
         if within:
             ax.plot([d for d, _ in within], [v for _, v in within],
-                    marker="o", color=colour, linewidth=1.3, markersize=4,
+                    marker="o", color=color, linewidth=1.3, markersize=4,
                     label=mix)
         if beyond:
             # bridge: prepend last within point
             seg = ([within[-1]] if within else []) + beyond
             ax.plot([d for d, _ in seg], [v for _, v in seg],
-                    marker="o", color=colour, linewidth=1.0, markersize=3,
+                    marker="o", color=color, linewidth=1.0, markersize=3,
                     linestyle="--", alpha=0.5)
 
     ax.axhline(0, color="black", linewidth=0.6)

@@ -16,6 +16,7 @@ import os
 import sys
 from datetime import datetime
 
+from cli_common import add_db_arg, require_db
 from core.business_intelligence import generate_feasibility_report
 
 
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Rule-based business-intelligence report over a scenario-tagged DB."
     )
-    parser.add_argument("--db",       default="data/delivery_system.sqlite")
+    add_db_arg(parser)
     parser.add_argument("--markdown", default=None,
                         help="If set, also write the report as a markdown file.")
     # Force-set encoding for stdout on Windows so we can print recommendation
@@ -88,8 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
     args = parser.parse_args(argv)
 
-    if not os.path.exists(args.db):
-        print(f"Database not found: {args.db}", file=sys.stderr)
+    if not require_db(args.db):
         return 2
 
     report = generate_feasibility_report(args.db)

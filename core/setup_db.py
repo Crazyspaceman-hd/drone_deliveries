@@ -34,7 +34,7 @@ def _maybe_add_column(cur: "sqlite3.Cursor", table: str, column: str, definition
 
 
 def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
-    """Initialise all tables and indexes.  Idempotent."""
+    """Initialize all tables and indexes.  Idempotent."""
     parent = os.path.dirname(db_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -102,7 +102,7 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
             last_event_at     TIMESTAMP,
             last_event_id     TEXT,
             run_id            TEXT,      -- lineage (Phase 15)
-            scenario_name     TEXT,      -- denormalised from trips for analytics (Phase 19)
+            scenario_name     TEXT,      -- denormalized from trips for analytics (Phase 19)
 
             -- Hybrid logistics characteristics + decision (Phase 19).
             -- All fields are synthetic and deterministic per (seed, trip_idx).
@@ -215,7 +215,7 @@ def create_db(db_path: str = DEFAULT_DB_PATH) -> None:
             transform_name      TEXT NOT NULL,   -- 'economics' / 'hybrid' / etc.
             transform_version   TEXT NOT NULL,   -- e.g. 'economics.v1'
             created_at          TEXT NOT NULL,   -- UTC ISO-8601
-            parameters_json     TEXT,            -- serialised inputs (EconomicModel/thresholds)
+            parameters_json     TEXT,            -- serialized inputs (EconomicModel/thresholds)
             git_commit          TEXT,            -- short hash; best-effort
             row_count           INTEGER,         -- rows updated/inserted
             notes               TEXT,

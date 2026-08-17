@@ -37,7 +37,7 @@ Current findings (from the live database at the time of this writing):
   every domain within addressable demand** — 8 of 12 cells green.
 - **Regional reaches break-even at *lower* volume than dense-urban**
   (≈150–250 / day vs ≈250–400 / day). The smaller absolute daily
-  overhead amortises faster despite lower per-drone productivity.
+  overhead amortizes faster despite lower per-drone productivity.
 - **The tightest addressable ceiling** is `urgent_documents` at 600
   deliveries / day. Its break-even (150 / day under regional) sits
   comfortably inside the ceiling — viability is not addressable-demand
@@ -127,12 +127,12 @@ in the workbench traces back to a specific transformation_runs row.
 
 ## What it demonstrates
 
-- Event-driven data modelling with an append-only operational log.
+- Event-driven data modeling with an append-only operational log.
 - Snapshot-based lineage — analytical results are persisted artifacts,
   not ephemeral query results.
 - Rerunnable transforms composed in deterministic pipeline order.
 - Rule-based validation across snapshot tables, severity-tagged.
-- Capacity-coupled cost modelling (fleet + support derived from volume,
+- Capacity-coupled cost modeling (fleet + support derived from volume,
   not asserted).
 - Synthetic comparative analytics with bounded, auditable formulas.
 - FastAPI + React workbench with shareable URLs.
@@ -173,7 +173,7 @@ workflow in one shot: `bash scripts/run_demo.sh`.
 The v1 contribution is the analytical framework and the workbench that
 make assumptions visible and testable. The clear v2 step is **real
 data**: import historical delivery records from a real operator,
-normalise them into the same `delivery_events` → snapshot schema, and
+normalize them into the same `delivery_events` → snapshot schema, and
 run the existing feasibility overlays (domains, capacity, volume,
 service mixes, what-if) against real demand history instead of synthetic
 generators. The JSONL export path is already shaped for that ingestion.

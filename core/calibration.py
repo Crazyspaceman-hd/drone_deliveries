@@ -11,7 +11,7 @@ rule-based interpretation strings.
 Important framing
 ──────────────────
 This is **calibration**, not **validation**.  We're checking whether the
-simulator's emergent behaviour matches the dial settings the operator
+simulator's emergent behavior matches the dial settings the operator
 turned — not whether either matches the real world.  A low drift just
 means "the simulator did what you told it to," not "the simulator is
 realistic."
@@ -28,7 +28,7 @@ Threshold labels (documented and tunable, top of file):
     0.02 <= |drift| <  0.05  → minor_divergence
     |drift| >= 0.05          → significant_divergence
 
-Distance drift uses kilometres instead of probabilities, with its own
+Distance drift uses kilometers instead of probabilities, with its own
 thresholds (also tunable).
 """
 

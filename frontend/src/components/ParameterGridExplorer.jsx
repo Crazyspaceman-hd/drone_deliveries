@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../api.js';
-import { colourForMargin } from './ViabilityGrid.jsx';
+import { colorForMargin } from './ViabilityGrid.jsx';
 
 /**
  * ParameterGridExplorer — a 2-D viability heatmap.
@@ -8,7 +8,7 @@ import { colourForMargin } from './ViabilityGrid.jsx';
  * Unlike the main viability grid (capacity_model × delivery_domain),
  * this fixes one base capacity and one domain, then sweeps TWO capacity
  * parameters against each other.  Each cell is a multi-override
- * synthetic capacity (``base@px=vx,py=vy``) coloured by its viability
+ * synthetic capacity (``base@px=vx,py=vy``) colored by its viability
  * margin.  Read-side and ephemeral — recomputed on demand, nothing
  * persisted.
  *
@@ -65,7 +65,7 @@ export function ParameterGridExplorer() {
       <p className="muted section-lead">
         Fix one capacity model and one delivery domain, then sweep two
         capacity parameters against each other. Each cell is a synthetic
-        variant with <em>both</em> overrides applied; colour is the
+        variant with <em>both</em> overrides applied; color is the
         viability margin at the addressable anchor. This shows how two
         levers <em>interact</em> — the diagonal where red turns green is
         the combination that flips viability. Read-only and recomputed on
@@ -141,12 +141,12 @@ function Heatmap({ grid }) {
                 {grid.values_x.map((vx) => {
                   const c = byCell[`${vx}|${vy}`];
                   const m = c ? c.viability_margin : null;
-                  const colour = (m === null || m === undefined)
-                    ? '#eeeeee' : colourForMargin(m, maxAbs);
+                  const color = (m === null || m === undefined)
+                    ? '#eeeeee' : colorForMargin(m, maxAbs);
                   return (
                     <td key={vx} className="mono"
                         title={c ? `${c.synthetic_name}\nmargin ${m === null ? 'n/a' : '$' + m.toFixed(2) + '/del.'}\nbreakeven ${c.breakeven_deliveries_per_day ?? 'never'}` : ''}
-                        style={{ backgroundColor: colour, textAlign: 'center' }}>
+                        style={{ backgroundColor: color, textAlign: 'center' }}>
                       {m === null || m === undefined ? '—'
                         : `${m >= 0 ? '+' : ''}$${m.toFixed(2)}`}
                     </td>

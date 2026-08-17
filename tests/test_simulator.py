@@ -85,7 +85,7 @@ def test_no_drone_left_flying(seed42_db: Path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Return-to-depot leg modelling
+# Return-to-depot leg modeling
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_completed_trips_have_returned_to_depot_event(seed42_db: Path):

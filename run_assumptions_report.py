@@ -83,7 +83,7 @@ def _to_markdown(summary: dict) -> str:
         "",
         "- **publicly_informed** — picked to land in a plausible public range. "
         "Values are still chosen by the project; no specific source is cited.",
-        "- **synthetic** — invented for comparative behaviour with no claim of "
+        "- **synthetic** — invented for comparative behavior with no claim of "
         "external grounding.",
         "",
         "## Scenario knobs",

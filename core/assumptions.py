@@ -9,7 +9,7 @@ Each Scenario field is tagged with one of two categories:
         energy use, urban-vs-rural density, last-mile economics.  The
         VALUES are still chosen by the project — the category just
         records that "there is a real-world range to anchor against."
-  - "synthetic": invented for comparative behaviour with no claim of
+  - "synthetic": invented for comparative behavior with no claim of
         external grounding.
 
 This module reads the registry in core/scenarios.py and re-emits it as
@@ -60,7 +60,7 @@ FIELD_CATEGORIES: dict[str, tuple[str, str]] = {
     "delivery_fee":                 ("publicly_informed",
         "Last-mile fee ranges vary widely; chosen so the BI 'needs >2x fee for rural' finding surfaces."),
 
-    # Synthetic behaviour knobs
+    # Synthetic behavior knobs
     "telemetry_bonus_per_leg":      ("synthetic",
         "Extra pings/leg in dense urban; invented for visual texture."),
     "battery_drain_multiplier":     ("synthetic",
@@ -76,7 +76,7 @@ FIELD_CATEGORIES: dict[str, tuple[str, str]] = {
     "emergency_return_penalty":     ("synthetic",
         "Financial drag applied to aborted trips; invented absolute values."),
     "labor_cost_per_delivery":      ("synthetic",
-        "Flat per-trip labour overhead; invented."),
+        "Flat per-trip labor overhead; invented."),
     "drone_depreciation_per_trip":  ("synthetic",
         "Per-trip equipment wear; invented."),
 }

@@ -55,7 +55,7 @@ RUN_ORDER         = 10               # economics first — hybrid reads trip_dis
 #
 # So a domain with high premium_share and high AOV earns more per delivery
 # than a low-premium / low-AOV domain on the SAME trip.  All other terms
-# in the cost model (energy, maintenance, labour, depreciation, penalty)
+# in the cost model (energy, maintenance, labor, depreciation, penalty)
 # are *physics-side* and stay invariant under domain change.
 PREMIUM_UPLIFT_PCT = 0.50   # premium orders surcharge 50% of the base fee
 AOV_SHARE          = 0.05   # the delivery captures 5% of total order value

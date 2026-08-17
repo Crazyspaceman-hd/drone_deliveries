@@ -5,7 +5,7 @@ import { useApi } from './useApi.js';
 /**
  * ViabilityGrid — the headline answer card.
  *
- * Renders a (capacity_model × delivery_domain) grid coloured by
+ * Renders a (capacity_model × delivery_domain) grid colored by
  * viability state.  Shared across the Overview, Main Finding, and
  * Domain & Scale pages so the same answer is visible everywhere a
  * reviewer might land.
@@ -18,13 +18,13 @@ import { useApi } from './useApi.js';
 // Categorical fallbacks — used only when a cell lacks a numeric
 // viability_margin (defensive; the API always provides one when
 // diagnostics exist).
-export const VIABILITY_COLOURS = {
+export const VIABILITY_COLORS = {
   viable: '#c8e6c9',
   beyond: '#fff59d',
   never:  '#ffcdd2',
 };
 
-// Three colour stops for the continuous diverging palette.  Matches the
+// Three color stops for the continuous diverging palette.  Matches the
 // matplotlib RdYlGn endpoints used by the published chart so the
 // workbench and the README chart read as the same picture.
 const PALETTE_STOPS = {
@@ -52,10 +52,10 @@ function _rgb(c) { return `rgb(${c[0]}, ${c[1]}, ${c[2]})`; }
 /**
  * Map a viability margin (dollars per delivery, signed) onto a
  * continuous diverging RdYlGn-like palette.  ``maxAbs`` shared across
- * all cells normalises the gradient so positive and negative shades
+ * all cells normalizes the gradient so positive and negative shades
  * are symmetric and comparable.
  */
-export function colourForMargin(margin, maxAbs) {
+export function colorForMargin(margin, maxAbs) {
   if (margin === null || margin === undefined) return '#eeeeee';
   if (!maxAbs || maxAbs <= 0) return _rgb(PALETTE_STOPS.middle);
   // t ∈ [0, 1] where 0 = most negative, 0.5 = neutral, 1 = most positive.
@@ -184,18 +184,18 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
                 {capHead}
                 {domains.map((dom) => {
                   const c = byCell[`${cap}|${dom}`];
-                  // Prefer continuous margin colour; fall back to the
+                  // Prefer continuous margin color; fall back to the
                   // categorical palette only if the cell has no margin
                   // (e.g. diagnostics empty).
-                  const colour = c && c.viability_margin !== null && c.viability_margin !== undefined
-                    ? colourForMargin(c.viability_margin, maxAbs)
-                    : (c ? VIABILITY_COLOURS[c.state] : '#eeeeee');
+                  const color = c && c.viability_margin !== null && c.viability_margin !== undefined
+                    ? colorForMargin(c.viability_margin, maxAbs)
+                    : (c ? VIABILITY_COLORS[c.state] : '#eeeeee');
                   return (
                     <td
                       key={dom}
                       title={cellTitle(c)}
                       style={{
-                        backgroundColor: colour,
+                        backgroundColor: color,
                         whiteSpace: 'pre-line',
                         textAlign: 'center',
                         fontSize: 12,
@@ -214,7 +214,7 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
 
       <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span>colour = viability margin at addressable anchor ($/delivery):</span>
+          <span>color = viability margin at addressable anchor ($/delivery):</span>
         </div>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
@@ -223,7 +223,7 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
           <span className="mono">−${maxAbs.toFixed(2)}</span>
           <div style={{
             flex: 1, height: 14,
-            background: `linear-gradient(to right, ${colourForMargin(-maxAbs, maxAbs)}, ${colourForMargin(0, maxAbs)}, ${colourForMargin(maxAbs, maxAbs)})`,
+            background: `linear-gradient(to right, ${colorForMargin(-maxAbs, maxAbs)}, ${colorForMargin(0, maxAbs)}, ${colorForMargin(maxAbs, maxAbs)})`,
             border: '1px solid #ccc',
           }} />
           <span className="mono">+${maxAbs.toFixed(2)}</span>
@@ -231,7 +231,7 @@ python run_transforms.py --all-runs --all-delivery-domains`}</pre>
         <p style={{ marginTop: 6 }}>
           Negative = loss depth at the largest sweep point within
           addressable demand. Positive = profit headroom. Cells past the
-          ceiling are coloured by their anchor margin (within addressable
+          ceiling are colored by their anchor margin (within addressable
           demand) and labelled <em>beyond ceiling</em> textually.
         </p>
       </div>

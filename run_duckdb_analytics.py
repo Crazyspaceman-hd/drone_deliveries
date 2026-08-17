@@ -18,22 +18,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cli_common import print_table
 from core.duckdb_analytics import (
     discover_run_parquet_dirs, generate_duckdb_summary,
 )
-
-
-def _print_table(headers: list[str], rows: list[tuple]) -> None:
-    if not rows:
-        print("  (no rows)")
-        return
-    str_rows = [[("" if v is None else str(v)) for v in r] for r in rows]
-    widths = [max(len(h), *(len(r[i]) for r in str_rows)) for i, h in enumerate(headers)]
-    fmt = "  " + "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format(*headers))
-    print(fmt.format(*("-" * w for w in widths)))
-    for r in str_rows:
-        print(fmt.format(*r))
 
 
 def _resolve_dirs(args) -> list[str]:
@@ -113,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, result in summary.items():
         print(f"=== {name} " + "=" * max(0, 56 - len(name)))
-        _print_table(result["headers"], result["rows"])
+        print_table(result["headers"], result["rows"])
         print()
 
     if args.markdown:
