@@ -562,7 +562,7 @@ def test_within_addressable_demand_matches_saturation_threshold(domain_populated
 
 def test_default_sweep_exercises_both_addressable_states(domain_populated_db: str):
     """The default sweep must produce some rows within addressable demand
-    AND some rows beyond — otherwise the clip behaviour is never
+    AND some rows beyond — otherwise the clip behavior is never
     exercised by the chart pipeline."""
     rows = volume_sensitivity(domain_populated_db)
     within = sum(1 for r in rows if r["within_addressable_demand"])

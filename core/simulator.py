@@ -218,7 +218,7 @@ def _insert_leg_row(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Great-circle distance between two (lat, lon) points in kilometres."""
+    """Great-circle distance between two (lat, lon) points in kilometers."""
     R = 6371.0088
     lat1, lon1 = math.radians(a[0]), math.radians(a[1])
     lat2, lon2 = math.radians(b[0]), math.radians(b[1])
@@ -318,7 +318,7 @@ def run_simulation(
 
     ``scenario`` may be a registered name (see core.scenarios.list_scenarios),
     a Scenario instance, or None (defaults to ``suburban_standard``, which
-    reproduces the pre-Phase-9 hard-coded behaviour for back-compat).
+    reproduces the pre-Phase-9 hard-coded behavior for back-compat).
 
     ``run_transforms`` (Phase 20, default True): after the simulator finishes,
     run the transform pipeline (economics + hybrid) so derived columns are

@@ -20,7 +20,7 @@ either:
     (e.g. ``rng.randint(3, 6) + scenario.telemetry_bonus_per_leg``).
 That way ``seed + scenario`` together produce a deterministic run, and
 the default scenario (``suburban_standard``) reproduces the pre-Phase-9
-seeded behaviour exactly.
+seeded behavior exactly.
 """
 
 from __future__ import annotations
@@ -79,16 +79,16 @@ class Scenario:
 #   * publicly_informed — picked to land in a plausible public range
 #         (urban/rural distances, battery alert bands, per-km energy,
 #         retail electricity, last-mile fees, field-service costs).
-#   * synthetic — invented for comparative behaviour (telemetry density,
+#   * synthetic — invented for comparative behavior (telemetry density,
 #         drain multiplier, emergency / route_deviation / maintenance
-#         probabilities, abort penalty, labour, depreciation).
+#         probabilities, abort penalty, labor, depreciation).
 #
 # Direction matters more than absolute values: urban_dense is "shorter
 # trips, gentler drain, fewer aborts, more route weaving"; rural_extended
 # is "longer trips, harder on battery, more aborts, costlier maintenance".
 
 # suburban_standard is the historical default — its knobs reproduce the
-# Phase 8 hard-coded behaviour exactly (so existing tests stay deterministic).
+# Phase 8 hard-coded behavior exactly (so existing tests stay deterministic).
 _SCENARIOS: dict[str, Scenario] = {
     "suburban_standard": Scenario(
         name                         = "suburban_standard",

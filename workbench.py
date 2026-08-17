@@ -47,7 +47,7 @@ ROOT       = Path(__file__).resolve().parent
 DB_DEFAULT = ROOT / "data" / "delivery_system.sqlite"
 FRONTEND   = ROOT / "frontend"
 
-# ANSI colours — disabled gracefully when stdout isn't a TTY (CI logs, pipes).
+# ANSI colors — disabled gracefully when stdout isn't a TTY (CI logs, pipes).
 _USE_COLOR = sys.stdout.isatty()
 
 
@@ -67,7 +67,7 @@ def _stream(proc: subprocess.Popen, tag: str) -> None:
         try:
             line = raw.decode("utf-8", errors="replace").rstrip()
             print(tag + line, flush=True)
-        except Exception as exc:  # pragma: no cover — defence in depth
+        except Exception as exc:  # pragma: no cover — defense in depth
             try:
                 print(f"{tag}<stream error: {exc!r}>", flush=True)
             except Exception:

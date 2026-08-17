@@ -3,7 +3,7 @@ core/service_mixes.py
 
 Named multi-domain service mixes (Phase 33).
 
-A *service mix* is a weighted portfolio of delivery domains, modelling
+A *service mix* is a weighted portfolio of delivery domains, modeling
 one delivery operator that serves a blended demand profile rather than a
 single pure domain.  It is an **analytical overlay** — it reuses the
 existing domain economics, capacity coupling, and domain volume-response

@@ -1,7 +1,7 @@
 -- assumption_summary.sql
 -- Observed outcomes per scenario.  Compare these against the configured
 -- knobs in core/scenarios.py (and the narrative in docs/assumptions.md)
--- to see whether the simulator's behaviour matches the assumptions you
+-- to see whether the simulator's behavior matches the assumptions you
 -- thought you were dialling in.
 --
 -- This query intentionally does NOT recompute Python config logic — it

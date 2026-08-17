@@ -45,7 +45,7 @@ from typing import Optional
 # Scoring constants (intentionally simple, tunable, and visible from the top).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Weights applied to normalised inputs in feasibility_score().
+# Weights applied to normalized inputs in feasibility_score().
 W_COMPLETION         = 50.0   # +completion_rate (0..1)
 W_PROFIT_MARGIN      = 30.0   # +clip(profit_margin_pct / 100, -1..+1)
 W_EMERGENCY_PENALTY  = 40.0   # -emergency_rate (0..1)

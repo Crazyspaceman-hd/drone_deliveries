@@ -44,7 +44,7 @@ Findings extracted from the live grid:
   beyond-ceiling / 4 never.
 - **Regional reaches break-even at *lower* volume than dense-urban**
   (≈150–250 / day vs ≈250–400 / day). Smaller absolute daily overhead
-  amortises faster, even though dense-urban's per-drone productivity is
+  amortizes faster, even though dense-urban's per-drone productivity is
   higher.
 - **The tightest addressable ceiling is `urgent_documents` at 600 / day.**
   Its break-even sits at 150 / day under regional cost — comfortably
@@ -135,27 +135,27 @@ local DB (`data/delivery_system.sqlite`) and reproduce via
   The "why" diagnostics attribute every failing `pilot_capacity` cell
   to **operator wages** (~60 % of per-delivery overhead), not capital.
 - **Operator staffing alone is not enough.** Reducing pilot staffing
-  from **0.60 → 0.20 operators per drone** narrows the modelled gap from
+  from **0.60 → 0.20 operators per drone** narrows the modeled gap from
   **−$15.89 to −$3.89 per delivery** (at pilot's native 8 deliveries /
   drone / day) — a large improvement that still **does not** reach
   break-even. Productivity has to move with it; the two-parameter
   explorer shows the red→green diagonal where both levers combine.
-- **Service mixes improve the modelled position but don't erase the
+- **Service mixes improve the modeled position but don't erase the
   overhead floor.** At `pilot_capacity` and 650 deliveries/day,
   `pharmacy_courier` was the best listed mix (**−$9.82** / delivery) and
   `platform_mixed_local` the weakest (**−$11.94**). **Every** listed mix
   beat its own weakest component — yet all stayed negative under pilot.
 - **This is the thesis in miniature:** blending domains and tuning
-  assumptions can lift the modelled position, but none of it removes the
+  assumptions can lift the modeled position, but none of it removes the
   capacity-overhead floor by itself. Targeted augmentation under
-  favourable capacity beats broad replacement under baseline capacity.
+  favorable capacity beats broad replacement under baseline capacity.
 
 ## What this demonstrates
 
 Skills the project exercises, in roughly the order a reviewer would
 encounter them:
 
-- **Event-driven data modelling.** Append-only `delivery_events` log
+- **Event-driven data modeling.** Append-only `delivery_events` log
   with projections rebuilt deterministically from the event stream.
 - **Snapshot-based analytical lineage.** Per-trip, per-overlay snapshot
   tables (`trip_economics_snapshots`, `trip_scale_snapshots`,
@@ -166,7 +166,7 @@ encounter them:
   `transformation_runs` row carrying git commit + parameter JSON.
 - **Rule-based validation.** Structural invariants across the snapshot
   tables, severity-tagged (INFO / WARN / ERROR), audited per-run.
-- **Capacity-coupled cost modelling.** Required fleet, operators, and
+- **Capacity-coupled cost modeling.** Required fleet, operators, and
   chargers derived from delivery volume rather than asserted.
 - **Synthetic comparative analytics.** Bounded domain-volume-response
   helpers, sweep-driven break-even discovery, viability cross-tab.
@@ -645,12 +645,12 @@ The simulator runs on a small set of explicit knobs. Two categories:
   is cited; values are chosen to land in defensible ballparks, not to
   match any one study.
 - **explicitly synthetic** — invented for comparative simulation
-  behaviour (emergency-return / route-deviation / maintenance
+  behavior (emergency-return / route-deviation / maintenance
   probabilities, drain multiplier, BI scoring weights and label
   thresholds).
 
 The narrative — including which knob is which, why direction matters
-more than absolute values, and what is *intentionally not modelled* —
+more than absolute values, and what is *intentionally not modeled* —
 lives in [`docs/assumptions.md`](docs/assumptions.md). A
 machine-readable view is in [`core/assumptions.py`](core/assumptions.py).
 
@@ -690,7 +690,7 @@ What lives where:
 | Layer | Owns | Examples |
 |---|---|---|
 | `core/simulator.py` | Raw event emission, trip/order/leg row creation, dispatch state, telemetry, maintenance, emergency returns | Writes `delivery_events`, `orders` (intrinsic fields only), `trips`, `trip_legs` |
-| `transforms/economics.py` | Distance derivation, energy/maintenance/labour costs, revenue, profit | Updates `trips.estimated_*` columns |
+| `transforms/economics.py` | Distance derivation, energy/maintenance/labor costs, revenue, profit | Updates `trips.estimated_*` columns |
 | `transforms/hybrid.py` | Fulfillment-mode decision, activation reason, truck baseline, drone latency estimate | Updates `orders.fulfillment_mode` etc. |
 | `analytics/` + `api/` + `frontend/` | Aggregation, BI scoring, calibration drift, charts, workbench UI | Read-only over derived state |
 
@@ -755,10 +755,10 @@ matching row in the new `telemetry_observations` side-table with:
 
 | Field | Units | Plausibility band |
 |---|---|---|
-| `altitude_m` | metres AGL | 0–120 (Part 107 ceiling) |
-| `airspeed_mps` | metres/sec | 0–30 (cruise ~14, sport top ~25) |
+| `altitude_m` | meters AGL | 0–120 (Part 107 ceiling) |
+| `airspeed_mps` | meters/sec | 0–30 (cruise ~14, sport top ~25) |
 | `heading_deg` | degrees | 0–360 |
-| `vertical_speed_mps` | metres/sec | ±5 (climb / descent) |
+| `vertical_speed_mps` | meters/sec | ±5 (climb / descent) |
 | `battery_temp_c` | °C | 15–60 normal, >45 warm, >55 concerning |
 | `motor_temp_c` | °C | 20–80 normal, ~95 thermal limit |
 | `estimated_remaining_range_km` | km | controller's own SoC × capacity-fade estimate |
@@ -1018,7 +1018,7 @@ valued — each step reflects a discrete capacity threshold crossing.
   with assumed productivity and cost structure.
 - It is **not** a production capacity planner. Real diseconomies of
   scale (regional dispatch, multi-depot routing, charger contention,
-  shift coverage) are not modelled.
+  shift coverage) are not modeled.
 
 ### Capacity model registry
 
@@ -1236,7 +1236,7 @@ implies very high per-drone utilization — which the synthetic model
 permits without complaint. The curves should be read as *cost-structure
 sensitivity given today's per-drone model*, not as a forecast of real
 large-scale economics. Real diseconomies (regional dispatch, multi-depot
-overhead growth) aren't modelled.
+overhead growth) aren't modeled.
 
 ### Running it
 
@@ -1406,7 +1406,7 @@ question. The **Two-parameter explorer** (Domain & Scale page) fixes a
 base capacity and a domain, then sweeps *two* capacity parameters
 against each other into a heatmap — each cell a multi-override synthetic
 name (`pilot_capacity@operator_to_drone_ratio=0.4,deliveries_per_drone_per_day=16`)
-coloured by viability margin. It's the same protocol and the same
+colored by viability margin. It's the same protocol and the same
 read-side computation; it just renders the *interaction* surface the
 1-D launcher can't. Against the reference DB
 (pilot_capacity × retail_package, operator ratio vs deliveries/drone/day):
@@ -1508,7 +1508,7 @@ Activation signals: `premium`, `urgent` (high urgency), `light_payload`
 (< 2.5 kg), `congestion_bypass` (> 60%), `queue_pressure` (> 65%),
 `short_distance` (< 8 km).
 
-Trucks are now modelled with simple batching (`batch_size=5`,
+Trucks are now modeled with simple batching (`batch_size=5`,
 cost ∝ `1/√batch`) and a congestion-driven latency penalty. Drone
 latency is `prep + distance / cruise_speed`.
 
@@ -1547,7 +1547,7 @@ curl http://localhost:8000/analytics/activation-reasons
 ```
 
 What this is **not**: a dispatcher, a routing engine, weather/FAA/traffic
-modelling, or any kind of optimization solver. The activation rules are
+modeling, or any kind of optimization solver. The activation rules are
 rule-based and explainable; trucks remain the baseline; drones are
 treated as augmentation.
 
@@ -1593,7 +1593,7 @@ The DB path is configurable via the `DRONE_API_DB` environment variable
 ### Workbench walkthrough
 
 The frontend (React + Vite, plain CSS, `react-router-dom` for shareable
-URLs) is organised as a narrative path for reviewers, not a tab gallery
+URLs) is organized as a narrative path for reviewers, not a tab gallery
 over endpoints. Nine primary nav items:
 
 | Page | URL | What it answers |
@@ -1760,9 +1760,9 @@ python run_validation.py --markdown outputs/reports/validation_report.md
 sqlite3 data/delivery_system.sqlite < analytics/sql/validation_summary.sql
 ```
 
-**Known behaviour:** running `run_scenarios.py` with multiple scenarios
+**Known behavior:** running `run_scenarios.py` with multiple scenarios
 against the same SQLite DB can leave the *first* scenario's drone with
-a trailing-open maintenance cycle — the next scenario reinitialises
+a trailing-open maintenance cycle — the next scenario reinitializes
 that drone's Python-side state. The validation layer surfaces this as a
 WARN under `maintenance_lifecycle_balance` (it is a documented design
 trade-off, not a bug). One-shot single-scenario runs validate cleanly.
@@ -1881,7 +1881,7 @@ Charts produced:
 | `scenario_feasibility_scores.png` | Rule-based feasibility score per scenario with strong/borderline thresholds. |
 | `scenario_operational_profile.png` | 2×2 grid: observed completion / emergency / maintenance / avg distance per scenario. |
 | `scenario_calibration_drift.png` | Three side-by-side grouped bars: configured vs observed rates for emergency, maintenance, and route deviation. |
-| `run_comparison_profit.png` | Total profit per `simulation_runs` row, coloured green/red by sign. |
+| `run_comparison_profit.png` | Total profit per `simulation_runs` row, colored green/red by sign. |
 | `cross_run_profitability.png` | Same data, but sourced from DuckDB → Parquet (with SQLite fallback if no Parquet present). |
 | `validation_results.png` | Two-panel chart: passed/failed counts + failures by rule. |
 | `delivery_displacement_savings.png` | Per-scenario truck-baseline vs drone-op cost vs the difference. |
@@ -1900,7 +1900,7 @@ Charts produced:
   `delivered` at that point. The drone is still in flight on its return
   leg, so the trip stays `in_flight` and the drone stays `flying` until
   `returned_to_depot` fires. Analytical questions about customer SLA use
-  `delivery_completed`; questions about fleet/drone utilisation use
+  `delivery_completed`; questions about fleet/drone utilization use
   `returned_to_depot`.
 - **SQLite is the local operational store.** It is the source of truth
   for everything `run_analytics.py` queries. No external service is
@@ -1946,10 +1946,10 @@ What `v1.0-portfolio` delivers, end to end:
 
 ## Future v2 direction
 
-The clear next step is **real data**, not more synthetic modelling:
+The clear next step is **real data**, not more synthetic modeling:
 
 - Import historical delivery records from a real delivery business.
-- Normalise that external delivery data into the same analytical schema
+- Normalize that external delivery data into the same analytical schema
   (`delivery_events` → snapshots).
 - Run the existing feasibility overlays (domains, capacity, volume,
   service mixes, what-if) against real demand history instead of

@@ -243,7 +243,7 @@ def domain_scale_matrix_endpoint(db: str = Depends(require_db)) -> dict:
     snapshot triples.  Built directly from snapshot tables — no experiment
     required — so the UI can render the matrix on bare run data.
 
-    Each cell summarises one (scenario, domain, scale_model) tuple using
+    Each cell summarizes one (scenario, domain, scale_model) tuple using
     the most-recent transformation_runs lineage chain.  Used by the
     workbench's Domain & Scale Analysis page.
     """
@@ -498,7 +498,7 @@ def viability_summary_endpoint(
     db: str = Depends(require_db),
 ) -> dict:
     """3×4 viability grid: every (capacity_model × delivery_domain) cell
-    summarised as viable / beyond addressable demand / never.
+    summarized as viable / beyond addressable demand / never.
 
     Read-only — aggregates what ``/analytics/volume-sensitivity`` would
     already return per capacity model.
@@ -535,7 +535,7 @@ def viability_summary_endpoint(
 
     # Continuous viability margin — pulled from the diagnostics' anchor
     # gap (dollars per delivery, signed).  Attached per cell so the
-    # frontend ViabilityGrid can colour cells along a diverging scale
+    # frontend ViabilityGrid can color cells along a diverging scale
     # rather than the categorical green/yellow/red.
     margin_by_cell = {
         (d["capacity_model"], d["delivery_domain"]): d.get("gap_at_anchor")

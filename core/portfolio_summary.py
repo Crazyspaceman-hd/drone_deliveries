@@ -13,14 +13,14 @@ everything.
 Design rules
 ─────────────
 * **Registry-driven.** No hard-coded capacity-model or domain names.
-  Anything that summarises across capacities iterates the current
+  Anything that summarizes across capacities iterates the current
   registry.  Adding a fourth capacity profile in the future surfaces
   automatically in every downstream surface that consumes this dict.
 * **No new analytics.** Every key is a thin re-projection of an
   existing ``compute_*`` / ``list_*`` / ``generate_*`` function.  If
   this module ever grows new business logic, that logic belongs in the
   appropriate domain module instead.
-* **JSON-serialisable.** ``json.dumps(generate_portfolio_summary(db))``
+* **JSON-serializable.** ``json.dumps(generate_portfolio_summary(db))``
   must succeed without a custom encoder — so the README + docs can
   embed the live dump in a ``<details>`` block for auditability.
 """
@@ -471,7 +471,7 @@ def generate_portfolio_summary(db_path: str) -> dict:
             run_counts              {simulation_runs, experiments}
             charts_dir              relative path of the charts output
 
-    Every value is JSON-serialisable without a custom encoder.
+    Every value is JSON-serializable without a custom encoder.
     """
     cells       = compute_viability_summary(db_path)
     # Attach the categorical state to each cell so the README's JSON

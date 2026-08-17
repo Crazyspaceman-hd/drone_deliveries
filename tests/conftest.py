@@ -160,7 +160,7 @@ def emergency_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def empty_db(tmp_path: Path) -> Path:
-    """A freshly-initialised DB with schema only."""
+    """A freshly-initialized DB with schema only."""
     db_path = tmp_path / "empty.sqlite"
     create_db(str(db_path))
     return db_path

@@ -158,7 +158,7 @@ def test_charts_list_and_fetch(workbench):
 def test_chart_path_traversal_rejected(workbench):
     r = workbench["client"].get("/charts/..%2Fdelivery_system.sqlite")
     # The route should refuse anything with slashes or .. — either 400 or 404
-    # is acceptable depending on how the test client normalises.  We only
+    # is acceptable depending on how the test client normalizes.  We only
     # need to confirm we never serve the file.
     assert r.status_code in (400, 404)
 

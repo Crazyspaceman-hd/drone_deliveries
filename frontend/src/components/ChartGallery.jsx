@@ -66,7 +66,7 @@ const CAPTIONS = {
   'cost_per_delivery_by_scale.png':
     'Effective cost per delivery under each scale model.',
   'effective_profit_by_delivery_volume.png':
-    '[Phase 27 legacy] Smooth 1/x amortisation — kept as the visible "before".',
+    '[Phase 27 legacy] Smooth 1/x amortization — kept as the visible "before".',
   'amortized_overhead_by_delivery_volume.png':
     '[Phase 27 legacy] Overhead per delivery under the fixed-overhead formula.',
   'required_drones_by_delivery_volume.png':

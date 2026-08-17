@@ -41,12 +41,12 @@ def test_summary_emits_every_documented_key(populated_db: str):
     assert not missing, f"missing keys: {missing}"
 
 
-def test_summary_is_json_serialisable_without_custom_encoder(populated_db: str):
+def test_summary_is_json_serializable_without_custom_encoder(populated_db: str):
     """No ``default=str`` allowed.  Anything in the dict must be a
     native JSON type — anything else means the README's live snapshot
     can't be embedded cleanly."""
     s = generate_portfolio_summary(populated_db)
-    json.dumps(s)  # raises if anything is non-serialisable
+    json.dumps(s)  # raises if anything is non-serializable
 
 
 def test_viability_breakdown_partitions_capacity_models(populated_db: str):
@@ -67,7 +67,7 @@ def test_viability_breakdown_partitions_capacity_models(populated_db: str):
     # Their union equals the set of capacities that actually had cells
     # computed.  A capacity with no viability cells (e.g. no snapshots
     # at all for any domain it covers) wouldn't appear in any bucket;
-    # that's correct behaviour.
+    # that's correct behavior.
     capacities_with_cells = {c["capacity_model"] for c in s["viability"]}
     assert a | b | c == capacities_with_cells
 

@@ -10,7 +10,7 @@ fake, and clearly separates two kinds of assumption:
    economics. No specific source is cited here; the values are picked
    to land in plausible ballparks, not to match any particular study.
 2. **Explicitly synthetic.** Invented by this project to make the
-   simulator produce comparative behaviour. These are visible knobs,
+   simulator produce comparative behavior. These are visible knobs,
    not estimates of the real world.
 
 The simulator's outputs are **comparative, not predictive.** Use them
@@ -30,7 +30,7 @@ and will need re-tuning if the cost model shifts substantially.
 These knobs are picked to land in plausible ranges. Public reporting
 and industry discussion often place values somewhere near these
 numbers; the exact values here are chosen for clean comparative
-behaviour, not accuracy.
+behavior, not accuracy.
 
 ### Operational geometry
 
@@ -64,10 +64,10 @@ behaviour, not accuracy.
 ## 2. Explicitly synthetic assumptions
 
 These are project-internal knobs, picked to make the simulator produce
-useful comparative behaviour. They are **not** anchored to anything
+useful comparative behavior. They are **not** anchored to anything
 external. Treat them as exploratory rather than calibrated.
 
-### Simulator behaviour knobs
+### Simulator behavior knobs
 
 | Field | urban_dense | suburban_standard | rural_extended | Why synthetic |
 |---|---:|---:|---:|---|
@@ -77,7 +77,7 @@ external. Treat them as exploratory rather than calibrated.
 | `battery_drain_multiplier` | 0.8 | 1.0 | 1.6 | Scales the simulator's per-step drain values. Suburban=1.0 is the baseline so the historical seed=42 run reproduces. |
 | `telemetry_bonus_per_leg` | +2 | 0 | 0 | Extra pings per leg in dense urban environments. Not from a real telemetry specification. |
 | `emergency_return_penalty` (USD) | 15 | 25 | 60 | A synthetic financial drag applied to aborted trips. Directionally reflects "rural aborts are worse" but the absolute values are invented. |
-| `labor_cost_per_delivery` (USD) | 4 | 5 | 8 | Flat per-trip labour overhead. Rural slightly higher to reflect longer dispatch involvement. Invented. |
+| `labor_cost_per_delivery` (USD) | 4 | 5 | 8 | Flat per-trip labor overhead. Rural slightly higher to reflect longer dispatch involvement. Invented. |
 | `drone_depreciation_per_trip` (USD) | 2 | 2 | 3 | Per-trip equipment wear assumption. Invented. |
 
 ### Business-intelligence weights
@@ -116,7 +116,7 @@ model, expect to retune them.
 
 ---
 
-## 4. What is intentionally not modelled
+## 4. What is intentionally not modeled
 
 These would be next-step calibration work. None are in this project today:
 
@@ -124,10 +124,10 @@ These would be next-step calibration work. None are in this project today:
 - regulatory routing (FAA flight restrictions)
 - traffic / pedestrian density beyond a simple "deviation chance"
 - charging-station availability
-- fleet capital cost / amortisation schedules
-- demand modelling (orders just exist when the simulator creates them)
+- fleet capital cost / amortization schedules
+- demand modeling (orders just exist when the simulator creates them)
 - multi-depot routing
 - real geographic data (we use bounded random points around a single depot)
 
 Adding any of these would push the project from "transparent exploratory
-sim" toward "realism theatre." The current design favours the former.
+sim" toward "realism theatre." The current design favors the former.

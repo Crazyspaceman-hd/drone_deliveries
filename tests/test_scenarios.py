@@ -1,4 +1,4 @@
-"""Scenario loading, determinism, and comparative behaviour."""
+"""Scenario loading, determinism, and comparative behavior."""
 
 import sqlite3
 from pathlib import Path

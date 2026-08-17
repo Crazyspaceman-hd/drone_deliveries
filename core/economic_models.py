@@ -40,7 +40,7 @@ from core.scenarios import get_scenario, list_scenarios
 
 
 # Phase 18 placeholder.  Truck cost-per-delivery isn't on Scenario (it
-# arrived with the displacement model), so we centralise its default here.
+# arrived with the displacement model), so we centralize its default here.
 DEFAULT_TRUCK_COST_PER_DELIVERY = 12.0
 
 
@@ -74,7 +74,7 @@ def from_scenario_name(scenario_name: str) -> EconomicModel:
 
 
 def to_parameters_json(model: EconomicModel) -> str:
-    """Serialise the model for the transformation_runs.parameters_json column."""
+    """Serialize the model for the transformation_runs.parameters_json column."""
     import json
     return json.dumps(asdict(model), separators=(",", ":"), sort_keys=True)
 

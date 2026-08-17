@@ -188,9 +188,9 @@ def domain_efficiency_credit(
     Below that, growth is log-saturating: rapid early gains, flattens
     out as the domain approaches its addressable ceiling.
 
-    Saturation normalisation
+    Saturation normalization
     ────────────────────────
-    The raw ``log1p(d/100)`` grows without limit, so we normalise by
+    The raw ``log1p(d/100)`` grows without limit, so we normalize by
     the same quantity evaluated at ``saturation_volume_per_day``::
 
         progress = min(1.0, log1p(d/100) / log1p(saturation/100))
@@ -419,7 +419,7 @@ def volume_sensitivity(
                 "adjusted_avg_revenue":            round(adj_revenue, 4),
 
                 # Phase 29 revision: addressable-demand flag.  False
-                # means the sweep point is past the domain's modelled
+                # means the sweep point is past the domain's modeled
                 # addressable demand — the row is still computed (the
                 # response terms have already saturated) but charts and
                 # tables should render it as extrapolation.
@@ -589,7 +589,7 @@ def compute_viability_summary(
         ``breakeven_deliveries_per_day`` is not None AND
         ``breakeven_deliveries_per_day <= addressable_ceiling``.
 
-    Read-only — no writes; just summarises what ``volume_sensitivity``
+    Read-only — no writes; just summarizes what ``volume_sensitivity``
     would already produce per capacity model.
     """
     # Late import to keep the public ``list_capacity_models`` symbol

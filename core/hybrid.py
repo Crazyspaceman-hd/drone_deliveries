@@ -1,7 +1,7 @@
 """
 core/hybrid.py
 
-Hybrid logistics modelling — drones as augmentation, trucks/drivers as
+Hybrid logistics modeling — drones as augmentation, trucks/drivers as
 the baseline.
 
 Phase 18 framed the project around "truck replacement" and the headline

@@ -1,7 +1,7 @@
 """Phase 14: avg_trip_distance_km materially drives simulator output.
 
 These tests verify that the operational-environment knobs *cause* observed
-behaviour, not just label it.  They share the session-scoped
+behavior, not just label it.  They share the session-scoped
 ``multi_scenario_db`` fixture from conftest.py (3 scenarios × 100 trips);
 every consumer is marked ``@pytest.mark.slow``.
 """

@@ -135,14 +135,14 @@ class DeliveryDomain:
 
     # Cost-side efficiency improvement as volume rises.  Caps at
     # ``avg_operational_cost * volume_efficiency_gain_rate`` once volume
-    # reaches saturation_volume_per_day.  Synthetic — modelled as a
-    # saturation-normalised log so the credit grows quickly at first and
+    # reaches saturation_volume_per_day.  Synthetic — modeled as a
+    # saturation-normalized log so the credit grows quickly at first and
     # then flattens.  See core/volume_sensitivity.domain_efficiency_credit.
     volume_efficiency_gain_rate: float
 
     # Revenue-side dilution as lower-priority volume enters the mix.
     # Caps at ``avg_revenue * volume_value_decay_rate`` once volume
-    # reaches saturation_volume_per_day.  Modelled linearly from 0 to
+    # reaches saturation_volume_per_day.  Modeled linearly from 0 to
     # saturation, then flat.  See core/volume_sensitivity.domain_value_decay.
     volume_value_decay_rate: float
 
@@ -207,7 +207,7 @@ _DOMAINS: dict[str, DeliveryDomain] = {
         saturation_volume_per_day   = 800,
     ),
 
-    # Heavier, lower urgency, batches well — the truck-favouring baseline
+    # Heavier, lower urgency, batches well — the truck-favoring baseline
     # used as the default domain because it most closely matches the
     # implicit assumptions of the pre-Phase-22 economics transform.
     "retail_package": DeliveryDomain(
