@@ -54,6 +54,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Union
 
+# Shared single source of truth for the two staff daily-cost constants
+# (also used by core/scale_models.py).  See core/labor_costs.py.
+from core.labor_costs import OPERATOR_DAILY_USD, MAINTENANCE_DAILY_USD
+
 
 # Bump when default profiles change in a way analytics should be able
 # to distinguish across snapshots / API responses.
@@ -82,10 +86,24 @@ class CapacityModel:
     # The primary structural knob.  Determines how many drones a given
     # volume requires.  Holds productivity assumptions about how often a
     # single drone can fly, recharge, and be re-dispatched per 24 h.
+    #
+    # Real-world anchor (single-package, one delivery = one out-and-back
+    # sortie): today's operating networks average ~3-8/drone/day; the
+    # physical ceiling is ~40-55/day (1.5 sorties/hr on-pad recharge,
+    # 3.5/hr with quick-swap batteries).  Built-in profiles span 8 (top
+    # of today's average) to 30 (near the single-package ceiling).
+    # Anything above ~50/day implies a MULTI-DROP aircraft, not faster
+    # turnaround — see docs/cost_model_research.md §2.
     deliveries_per_drone_per_day: float
 
     # Staffing ratios (per drone).  Multiplied by required_drones at
     # sweep time and ceil()'d to produce headcounts.
+    #
+    # operator_to_drone_ratio maps onto the FAA Part 108 automation
+    # ladder: NPRM caps of 1:5 (Level-2 automation) and 1:20 (Level-3);
+    # current multi-drone BVLOS waivers run ~1:4.  Built-in profiles span
+    # 1:2 (0.50, conservative pilot) → 1:6.7 (0.15, ~Level-2) → 1:12.5
+    # (0.08, between Level-2 and Level-3).  See cost_model_research.md §1.
     operator_to_drone_ratio:     float
     maintenance_staff_per_drone: float
 
@@ -125,8 +143,8 @@ _CAPACITY_MODELS: dict[str, CapacityModel] = {
         maintenance_staff_per_drone           = 0.20,
         charger_to_drone_ratio                = 1.0,
         platform_fixed_cost_usd_day           = 400.0,
-        operator_daily_cost_usd               = 240.0,
-        maintenance_daily_cost_usd            = 280.0,
+        operator_daily_cost_usd               = OPERATOR_DAILY_USD,
+        maintenance_daily_cost_usd            = MAINTENANCE_DAILY_USD,
         charger_daily_cost_usd                = 8.0,
         drone_daily_lease_or_depreciation_usd = 15.0,
     ),
@@ -139,8 +157,8 @@ _CAPACITY_MODELS: dict[str, CapacityModel] = {
         maintenance_staff_per_drone           = 0.10,
         charger_to_drone_ratio                = 0.5,
         platform_fixed_cost_usd_day           = 1200.0,
-        operator_daily_cost_usd               = 240.0,
-        maintenance_daily_cost_usd            = 280.0,
+        operator_daily_cost_usd               = OPERATOR_DAILY_USD,
+        maintenance_daily_cost_usd            = MAINTENANCE_DAILY_USD,
         charger_daily_cost_usd                = 8.0,
         drone_daily_lease_or_depreciation_usd = 15.0,
     ),
@@ -155,8 +173,8 @@ _CAPACITY_MODELS: dict[str, CapacityModel] = {
         maintenance_staff_per_drone           = 0.06,
         charger_to_drone_ratio                = 0.4,
         platform_fixed_cost_usd_day           = 3500.0,
-        operator_daily_cost_usd               = 240.0,
-        maintenance_daily_cost_usd            = 280.0,
+        operator_daily_cost_usd               = OPERATOR_DAILY_USD,
+        maintenance_daily_cost_usd            = MAINTENANCE_DAILY_USD,
         charger_daily_cost_usd                = 8.0,
         drone_daily_lease_or_depreciation_usd = 15.0,
     ),
